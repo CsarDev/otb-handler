@@ -1,0 +1,28 @@
+{
+  "name": "@otb/server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "@otb/core": "workspace:*",
+    "@otb/db": "workspace:*",
+    "@otb/api": "workspace:*",
+    "@otb/auth": "workspace:*",
+    "@otb/logger": "workspace:*",
+    "@otb/excel": "workspace:*",
+    "@otb/pdf": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "bun-types": "^1.1.0"
+  }
+}

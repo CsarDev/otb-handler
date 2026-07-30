@@ -1,0 +1,71 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2022"
+    ],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "sourceMap": true,
+    "paths": {
+      "@otb/core": [
+        "./packages/core/src"
+      ],
+      "@otb/core/*": [
+        "./packages/core/src/*"
+      ],
+      "@otb/db": [
+        "./packages/db/src"
+      ],
+      "@otb/db/*": [
+        "./packages/db/src/*"
+      ],
+      "@otb/api": [
+        "./packages/api/src"
+      ],
+      "@otb/api/*": [
+        "./packages/api/src/*"
+      ],
+      "@otb/ui": [
+        "./packages/ui/src"
+      ],
+      "@otb/ui/*": [
+        "./packages/ui/src/*"
+      ],
+      "@otb/auth": [
+        "./packages/auth/src"
+      ],
+      "@otb/auth/*": [
+        "./packages/auth/src/*"
+      ],
+      "@otb/logger": [
+        "./packages/logger/src"
+      ],
+      "@otb/logger/*": [
+        "./packages/logger/src/*"
+      ],
+      "@otb/excel": [
+        "./packages/excel/src"
+      ],
+      "@otb/excel/*": [
+        "./packages/excel/src/*"
+      ],
+      "@otb/pdf": [
+        "./packages/pdf/src"
+      ],
+      "@otb/pdf/*": [
+        "./packages/pdf/src/*"
+      ]
+    }
+  },
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}

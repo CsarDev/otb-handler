@@ -1,0 +1,13 @@
+node_modules/
+dist/
+tmp/
+.nx/
+*.db
+*.db-journal
+*.log
+.env
+.env.local
+.DS_Store
+coverage/
+.vite/
+.atl/

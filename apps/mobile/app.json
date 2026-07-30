@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "ControlOTB",
+    "slug": "control-otb",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "scheme": "control-otb",
+    "platforms": ["ios", "android"],
+    "plugins": ["expo-router"]
+  }
+}
