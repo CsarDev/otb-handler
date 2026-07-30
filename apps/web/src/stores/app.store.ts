@@ -118,9 +118,9 @@ type AppState = {
   libroDiario: LibroDiarioEntry[];
   resumenSocio: ResumenSocioReport | null;
   reportsLoading: boolean;
-  fetchBalance: (gestion?: number, mes?: string) => Promise<void>;
-  fetchLibroDiario: (fechaDesde?: string, fechaHasta?: string) => Promise<void>;
-  fetchResumenSocio: (socioId: string) => Promise<void>;
+  fetchBalance: (gestion?: number, mes?: string, fechaDesde?: string, fechaHasta?: string) => Promise<void>;
+  fetchLibroDiario: (fechaDesde?: string, fechaHasta?: string, gestion?: string, mes?: string, tipo?: string) => Promise<void>;
+  fetchResumenSocio: (socioId: string, gestion?: string, mes?: string, fechaDesde?: string, fechaHasta?: string, tipo?: string) => Promise<void>;
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -357,12 +357,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   libroDiario: [],
   resumenSocio: null,
   reportsLoading: false,
-  fetchBalance: async (gestion, mes) => {
+  fetchBalance: async (gestion, mes, fechaDesde, fechaHasta) => {
     set({ reportsLoading: true });
     try {
       const params = new URLSearchParams();
       if (gestion) params.set('gestion', String(gestion));
       if (mes) params.set('mes', mes);
+      if (fechaDesde) params.set('fechaDesde', fechaDesde);
+      if (fechaHasta) params.set('fechaHasta', fechaHasta);
       const qs = params.toString() ? `?${params}` : '';
       const data = await request<BalanceReport>(`/reportes/balance${qs}`);
       set({ balanceReport: data, reportsLoading: false });
@@ -370,12 +372,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ reportsLoading: false });
     }
   },
-  fetchLibroDiario: async (fechaDesde, fechaHasta) => {
+  fetchLibroDiario: async (fechaDesde, fechaHasta, gestion, mes, tipo) => {
     set({ reportsLoading: true });
     try {
       const params = new URLSearchParams();
       if (fechaDesde) params.set('fechaDesde', fechaDesde);
       if (fechaHasta) params.set('fechaHasta', fechaHasta);
+      if (gestion) params.set('gestion', gestion);
+      if (mes) params.set('mes', mes);
+      if (tipo && tipo !== 'todos') params.set('tipo', tipo);
       const qs = params.toString() ? `?${params}` : '';
       const data = await request<LibroDiarioEntry[]>(`/reportes/libro-diario${qs}`);
       set({ libroDiario: data, reportsLoading: false });
@@ -383,10 +388,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ reportsLoading: false });
     }
   },
-  fetchResumenSocio: async (socioId) => {
+  fetchResumenSocio: async (socioId, gestion, mes, fechaDesde, fechaHasta, tipo) => {
     set({ reportsLoading: true });
     try {
-      const data = await request<ResumenSocioReport>(`/reportes/resumen-socio/${socioId}`);
+      const params = new URLSearchParams();
+      if (gestion) params.set('gestion', gestion);
+      if (mes) params.set('mes', mes);
+      if (fechaDesde) params.set('fechaDesde', fechaDesde);
+      if (fechaHasta) params.set('fechaHasta', fechaHasta);
+      if (tipo && tipo !== 'todos') params.set('tipo', tipo);
+      const qs = params.toString() ? `?${params}` : '';
+      const data = await request<ResumenSocioReport>(`/reportes/resumen-socio/${socioId}${qs}`);
       set({ resumenSocio: data, reportsLoading: false });
     } catch (e) {
       set({ reportsLoading: false });

@@ -117,8 +117,8 @@ export type ResumenSocioReport = {
   totalAportado: number;
   multasPagadas: number;
   saldoPendienteMultas: number;
-  aportesPendientes: number;
-  multasPendientesCount: number;
+  aportesPendientes: (Aporte & { socioNombre: string | null; socioApellido: string | null })[];
+  multasPendientes: (Multa & { socioNombre: string | null; socioApellido: string | null })[];
 };
 
 export type PagoParcialRequest = {

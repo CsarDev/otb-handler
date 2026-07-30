@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '../stores/app.store';
 
 type Tab = 'balance' | 'libro-diario' | 'resumen-socio';
+type BalanceMode = 'gestion-mes' | 'gestion' | 'rango' | 'todas';
+type ResumenTipo = 'todos' | 'aportes' | 'multas';
 
 export default function ReportesPage() {
   const {
@@ -11,24 +13,40 @@ export default function ReportesPage() {
   } = useAppStore();
 
   const [tab, setTab] = useState<Tab>('balance');
+  const [balanceMode, setBalanceMode] = useState<BalanceMode>('gestion-mes');
   const [gestion, setGestion] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(String(new Date().getMonth() + 1).padStart(2, '0'));
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
   const [selectedSocioId, setSelectedSocioId] = useState('');
+  const [ldGestion, setLdGestion] = useState('');
+  const [ldMes, setLdMes] = useState('');
+  const [ldTipo, setLdTipo] = useState<string>('todos');
+  const [rsGestion, setRsGestion] = useState('');
+  const [rsMes, setRsMes] = useState('');
+  const [rsFechaDesde, setRsFechaDesde] = useState('');
+  const [rsFechaHasta, setRsFechaHasta] = useState('');
+  const [rsTipo, setRsTipo] = useState<ResumenTipo>('todos');
 
   useEffect(() => {
     fetchSocios();
   }, [fetchSocios]);
 
   useEffect(() => {
-    if (tab === 'balance') fetchBalance(gestion, mes);
-    else if (tab === 'libro-diario') fetchLibroDiario(fechaDesde || undefined, fechaHasta || undefined);
-    else if (tab === 'resumen-socio' && selectedSocioId) fetchResumenSocio(selectedSocioId);
-  }, [tab, gestion, mes, fechaDesde, fechaHasta, selectedSocioId, fetchBalance, fetchLibroDiario, fetchResumenSocio]);
+    if (tab === 'balance') {
+      if (balanceMode === 'gestion-mes') fetchBalance(gestion, mes);
+      else if (balanceMode === 'gestion') fetchBalance(gestion);
+      else if (balanceMode === 'rango') fetchBalance(undefined, undefined, fechaDesde || undefined, fechaHasta || undefined);
+      else fetchBalance();
+    } else if (tab === 'libro-diario') {
+      fetchLibroDiario(fechaDesde || undefined, fechaHasta || undefined, ldGestion || undefined, ldMes || undefined, ldTipo === 'todos' ? undefined : ldTipo);
+    } else if (tab === 'resumen-socio' && selectedSocioId) {
+      fetchResumenSocio(selectedSocioId, rsGestion || undefined, rsMes || undefined, rsFechaDesde || undefined, rsFechaHasta || undefined, rsTipo === 'todos' ? undefined : rsTipo);
+    }
+  }, [tab, balanceMode, gestion, mes, fechaDesde, fechaHasta, selectedSocioId, ldGestion, ldMes, ldTipo, rsGestion, rsMes, rsFechaDesde, rsFechaHasta, rsTipo, fetchBalance, fetchLibroDiario, fetchResumenSocio]);
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: 'balance', label: 'Balance Mensual' },
+    { key: 'balance', label: 'Balance' },
     { key: 'libro-diario', label: 'Libro Diario' },
     { key: 'resumen-socio', label: 'Resumen por Socio' },
   ];
@@ -55,20 +73,32 @@ export default function ReportesPage() {
 
       {reportsLoading && <p className="mb-4 text-sm text-gray-500">Cargando...</p>}
 
+      {/* ── BALANCE ── */}
       {tab === 'balance' && (
         <div>
-          <div className="mb-4 flex gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Gestión</label>
+          <div className="mb-4 flex flex-wrap gap-3">
+            <select
+              value={balanceMode}
+              onChange={(e) => setBalanceMode(e.target.value as BalanceMode)}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="gestion-mes">Gestión + Mes</option>
+              <option value="gestion">Solo Gestión</option>
+              <option value="rango">Rango de Fechas</option>
+              <option value="todas">Todas las Gestiones</option>
+            </select>
+
+            {balanceMode !== 'todas' && balanceMode !== 'rango' && (
               <input
                 type="number"
                 value={gestion}
                 onChange={(e) => setGestion(Number(e.target.value))}
                 className="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                placeholder="Gestión"
               />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Mes</label>
+            )}
+
+            {balanceMode === 'gestion-mes' && (
               <select
                 value={mes}
                 onChange={(e) => setMes(e.target.value)}
@@ -79,7 +109,14 @@ export default function ReportesPage() {
                   return <option key={m} value={m}>{m}</option>;
                 })}
               </select>
-            </div>
+            )}
+
+            {balanceMode === 'rango' && (
+              <>
+                <input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Desde" />
+                <input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Hasta" />
+              </>
+            )}
           </div>
 
           {balanceReport && (
@@ -98,9 +135,7 @@ export default function ReportesPage() {
                   </p>
                 </div>
                 <div className={`rounded-xl border p-4 ${balanceReport.neto >= 0 ? 'bg-blue-50' : 'bg-orange-50'}`}>
-                  <p className={`text-xs font-medium ${balanceReport.neto >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                    Neto
-                  </p>
+                  <p className={`text-xs font-medium ${balanceReport.neto >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>Neto</p>
                   <p className={`mt-1 text-2xl font-bold ${balanceReport.neto >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
                     Bs {balanceReport.neto.toFixed(2)}
                   </p>
@@ -111,48 +146,33 @@ export default function ReportesPage() {
                 <div className="rounded-xl border bg-white p-4 shadow-sm">
                   <h4 className="mb-3 text-sm font-semibold text-gray-900">Ingresos por Categoría</h4>
                   {balanceReport.ingresosPorCategoria.length === 0 ? (
-                    <p className="text-sm text-gray-400">Sin ingresos en este período</p>
+                    <p className="text-sm text-gray-400">Sin ingresos</p>
                   ) : (
                     <table className="w-full text-left text-sm">
-                      <thead>
-                        <tr className="border-b text-xs text-gray-500">
-                          <th className="pb-2 font-medium">Categoría</th>
-                          <th className="pb-2 text-right font-medium">Monto</th>
-                        </tr>
-                      </thead>
+                      <thead><tr className="border-b text-xs text-gray-500"><th className="pb-2 font-medium">Categoría</th><th className="pb-2 text-right font-medium">Monto</th></tr></thead>
                       <tbody>
                         {balanceReport.ingresosPorCategoria.map((cat, i) => (
                           <tr key={i} className="border-b last:border-0">
                             <td className="py-2 text-gray-700">{cat.categoria}</td>
-                            <td className="py-2 text-right font-medium text-green-700">
-                              Bs {cat.total.toFixed(2)}
-                            </td>
+                            <td className="py-2 text-right font-medium text-green-700">Bs {cat.total.toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   )}
                 </div>
-
                 <div className="rounded-xl border bg-white p-4 shadow-sm">
                   <h4 className="mb-3 text-sm font-semibold text-gray-900">Egresos por Categoría</h4>
                   {balanceReport.egresosPorCategoria.length === 0 ? (
-                    <p className="text-sm text-gray-400">Sin egresos en este período</p>
+                    <p className="text-sm text-gray-400">Sin egresos</p>
                   ) : (
                     <table className="w-full text-left text-sm">
-                      <thead>
-                        <tr className="border-b text-xs text-gray-500">
-                          <th className="pb-2 font-medium">Categoría</th>
-                          <th className="pb-2 text-right font-medium">Monto</th>
-                        </tr>
-                      </thead>
+                      <thead><tr className="border-b text-xs text-gray-500"><th className="pb-2 font-medium">Categoría</th><th className="pb-2 text-right font-medium">Monto</th></tr></thead>
                       <tbody>
                         {balanceReport.egresosPorCategoria.map((cat, i) => (
                           <tr key={i} className="border-b last:border-0">
                             <td className="py-2 text-gray-700">{cat.categoria}</td>
-                            <td className="py-2 text-right font-medium text-red-700">
-                              Bs {cat.total.toFixed(2)}
-                            </td>
+                            <td className="py-2 text-right font-medium text-red-700">Bs {cat.total.toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -165,32 +185,43 @@ export default function ReportesPage() {
         </div>
       )}
 
+      {/* ── LIBRO DIARIO ── */}
       {tab === 'libro-diario' && (
         <div>
-          <div className="mb-4 flex gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Desde</label>
-              <input
-                type="date"
-                value={fechaDesde}
-                onChange={(e) => setFechaDesde(e.target.value)}
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Hasta</label>
-              <input
-                type="date"
-                value={fechaHasta}
-                onChange={(e) => setFechaHasta(e.target.value)}
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
-              />
-            </div>
+          <div className="mb-4 flex flex-wrap gap-3">
+            <input
+              type="number"
+              placeholder="Gestión"
+              value={ldGestion}
+              onChange={(e) => setLdGestion(e.target.value)}
+              className="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <select
+              value={ldMes}
+              onChange={(e) => setLdMes(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="">Todos los meses</option>
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={String(i + 1).padStart(2, '0')}>{i + 1}</option>
+              ))}
+            </select>
+            <select
+              value={ldTipo}
+              onChange={(e) => setLdTipo(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="todos">Todos</option>
+              <option value="ingreso">Ingresos</option>
+              <option value="egreso">Egresos</option>
+            </select>
+            <input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Desde" />
+            <input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Hasta" />
           </div>
 
           {libroDiario.length === 0 && !reportsLoading && (
             <div className="rounded-xl border bg-white p-12 text-center shadow-sm">
-              <p className="text-gray-500">No hay movimientos en este período</p>
+              <p className="text-gray-500">No hay movimientos</p>
             </div>
           )}
 
@@ -214,17 +245,11 @@ export default function ReportesPage() {
                       <td className="px-4 py-3">
                         <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
                           m.tipo === 'ingreso' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                        }`}>
-                          {m.tipo}
-                        </span>
+                        }`}>{m.tipo}</span>
                       </td>
-                      <td className="px-4 py-3">
-                        {m.socioNombre ? `${m.socioNombre} ${m.socioApellido ?? ''}` : '-'}
-                      </td>
+                      <td className="px-4 py-3">{m.socioNombre ? `${m.socioNombre} ${m.socioApellido ?? ''}` : '-'}</td>
                       <td className="px-4 py-3 text-gray-700">{m.nota ?? '-'}</td>
-                      <td className={`px-4 py-3 font-medium ${m.tipo === 'ingreso' ? 'text-green-700' : 'text-red-700'}`}>
-                        Bs {m.monto.toFixed(2)}
-                      </td>
+                      <td className={`px-4 py-3 font-medium ${m.tipo === 'ingreso' ? 'text-green-700' : 'text-red-700'}`}>Bs {m.monto.toFixed(2)}</td>
                       <td className="px-4 py-3 text-gray-500">{m.numeroRecibo ?? '-'}</td>
                     </tr>
                   ))}
@@ -235,19 +260,28 @@ export default function ReportesPage() {
         </div>
       )}
 
+      {/* ── RESUMEN SOCIO ── */}
       {tab === 'resumen-socio' && (
         <div>
-          <div className="mb-4">
-            <label className="mb-1 block text-xs font-medium text-gray-600">Seleccionar Socio</label>
+          <div className="mb-4 flex flex-wrap gap-3">
             <select
               value={selectedSocioId}
               onChange={(e) => setSelectedSocioId(e.target.value)}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
             >
-              <option value="">Seleccionar...</option>
+              <option value="">Seleccionar socio...</option>
               {socios.map((s) => (
                 <option key={s.id} value={s.id}>{s.nombre} {s.apellidoPaterno}</option>
               ))}
+            </select>
+            <input type="number" placeholder="Gestión" value={rsGestion} onChange={(e) => setRsGestion(e.target.value)} className="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            <input type="number" placeholder="Mes" min={1} max={12} value={rsMes} onChange={(e) => setRsMes(e.target.value)} className="w-20 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            <input type="date" value={rsFechaDesde} onChange={(e) => setRsFechaDesde(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Desde" />
+            <input type="date" value={rsFechaHasta} onChange={(e) => setRsFechaHasta(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Hasta" />
+            <select value={rsTipo} onChange={(e) => setRsTipo(e.target.value as ResumenTipo)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              <option value="todos">Aportes + Multas</option>
+              <option value="aportes">Solo Aportes</option>
+              <option value="multas">Solo Multas</option>
             </select>
           </div>
 
@@ -262,33 +296,65 @@ export default function ReportesPage() {
               <div className="grid grid-cols-3 gap-4">
                 <div className="rounded-xl border bg-green-50 p-4">
                   <p className="text-xs font-medium text-green-600">Total Aportado</p>
-                  <p className="mt-1 text-2xl font-bold text-green-700">
-                    Bs {resumenSocio.totalAportado.toFixed(2)}
-                  </p>
+                  <p className="mt-1 text-2xl font-bold text-green-700">Bs {resumenSocio.totalAportado.toFixed(2)}</p>
                 </div>
                 <div className="rounded-xl border bg-yellow-50 p-4">
                   <p className="text-xs font-medium text-yellow-600">Multas Pagadas</p>
-                  <p className="mt-1 text-2xl font-bold text-yellow-700">
-                    Bs {resumenSocio.multasPagadas.toFixed(2)}
-                  </p>
+                  <p className="mt-1 text-2xl font-bold text-yellow-700">Bs {resumenSocio.multasPagadas.toFixed(2)}</p>
                 </div>
                 <div className="rounded-xl border bg-red-50 p-4">
-                  <p className="text-xs font-medium text-red-600">Saldo Pendiente Multas</p>
-                  <p className="mt-1 text-2xl font-bold text-red-700">
-                    Bs {resumenSocio.saldoPendienteMultas.toFixed(2)}
-                  </p>
+                  <p className="text-xs font-medium text-red-600">Saldo Pendiente</p>
+                  <p className="mt-1 text-2xl font-bold text-red-700">Bs {resumenSocio.saldoPendienteMultas.toFixed(2)}</p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-xl border bg-white p-4 shadow-sm">
-                  <p className="text-sm text-gray-600">Aportes Pendientes</p>
-                  <p className="text-3xl font-bold text-gray-900">{resumenSocio.aportesPendientes}</p>
-                </div>
-                <div className="rounded-xl border bg-white p-4 shadow-sm">
-                  <p className="text-sm text-gray-600">Multas Pendientes</p>
-                  <p className="text-3xl font-bold text-gray-900">{resumenSocio.multasPendientesCount}</p>
-                </div>
+              <div className="grid grid-cols-2 gap-6">
+                {(rsTipo === 'todos' || rsTipo === 'aportes') && (
+                  <div className="rounded-xl border bg-white p-4 shadow-sm">
+                    <h4 className="mb-3 text-sm font-semibold text-gray-900">Aportes Pendientes ({resumenSocio.aportesPendientes.length})</h4>
+                    {resumenSocio.aportesPendientes.length === 0 ? (
+                      <p className="text-sm text-gray-400">Sin aportes pendientes</p>
+                    ) : (
+                      <table className="w-full text-left text-sm">
+                        <thead><tr className="border-b text-xs text-gray-500"><th className="pb-2 font-medium">Mes</th><th className="pb-2 font-medium">Gestión</th><th className="pb-2 font-medium">Tipo</th><th className="pb-2 text-right font-medium">Monto</th><th className="pb-2 text-right font-medium">Saldo</th></tr></thead>
+                        <tbody>
+                          {resumenSocio.aportesPendientes.map((a) => (
+                            <tr key={a.id} className="border-b last:border-0">
+                              <td className="py-2 text-gray-700">{a.mes}</td>
+                              <td className="py-2 text-gray-700">{a.gestion}</td>
+                              <td className="py-2 text-gray-700">{a.tipo}</td>
+                              <td className="py-2 text-right text-gray-700">Bs {a.montoBase.toFixed(2)}</td>
+                              <td className="py-2 text-right font-medium text-yellow-700">Bs {(a.saldoPendiente ?? a.montoBase).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )}
+
+                {(rsTipo === 'todos' || rsTipo === 'multas') && (
+                  <div className="rounded-xl border bg-white p-4 shadow-sm">
+                    <h4 className="mb-3 text-sm font-semibold text-gray-900">Multas Pendientes ({resumenSocio.multasPendientes.length})</h4>
+                    {resumenSocio.multasPendientes.length === 0 ? (
+                      <p className="text-sm text-gray-400">Sin multas pendientes</p>
+                    ) : (
+                      <table className="w-full text-left text-sm">
+                        <thead><tr className="border-b text-xs text-gray-500"><th className="pb-2 font-medium">Concepto</th><th className="pb-2 font-medium">Fecha</th><th className="pb-2 text-right font-medium">Monto</th><th className="pb-2 text-right font-medium">Saldo</th></tr></thead>
+                        <tbody>
+                          {resumenSocio.multasPendientes.map((m) => (
+                            <tr key={m.id} className="border-b last:border-0">
+                              <td className="py-2 text-gray-700">{m.concepto}</td>
+                              <td className="py-2 text-gray-700">{m.fechaGen}</td>
+                              <td className="py-2 text-right text-gray-700">Bs {m.monto.toFixed(2)}</td>
+                              <td className="py-2 text-right font-medium text-red-700">Bs {m.saldoPendiente.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
