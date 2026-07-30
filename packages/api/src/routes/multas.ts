@@ -32,12 +32,18 @@ multas.post('/', async (c) => {
     return c.json({ error: 'socioId, concepto, and monto are required' }, 400);
   }
 
+  const monto = Number(body.monto);
   const result = db
     .insert(schema.multas)
     .values({
       id: crypto.randomUUID(),
       fechaGen: new Date().toISOString().split('T')[0],
-      ...body,
+      socioId: body.socioId,
+      actividadId: body.actividadId ?? null,
+      concepto: body.concepto,
+      monto,
+      saldoPendiente: monto,
+      montoPagado: 0,
     })
     .returning()
     .get();
@@ -73,7 +79,11 @@ multas.post('/:id/pagar', async (c) => {
   if (!multa) return c.json({ error: 'Multa not found' }, 404);
   if (multa.estado === 'pagado') return c.json({ error: 'Multa already paid' }, 400);
 
-  const montoAbono = body.monto ?? multa.saldoPendiente;
+  const montoAbono = body.monto !== undefined ? Number(body.monto) : multa.saldoPendiente;
+  if (montoAbono <= 0) return c.json({ error: 'El monto debe ser mayor a 0' }, 400);
+  if (montoAbono > multa.saldoPendiente) {
+    return c.json({ error: 'El monto no puede superar el saldo pendiente' }, 400);
+  }
   const fechaPago = body.fechaPago ?? new Date().toISOString().split('T')[0];
   const numeroRecibo = body.numeroRecibo;
 

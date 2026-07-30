@@ -144,13 +144,16 @@ reportes.get('/resumen-socio/:id', (c) => {
     .where(and(eq(schema.aportes.socioId, id), eq(schema.aportes.estado, 'pagado')))
     .get();
 
-  const multasRow = db
-    .select({
-      totalPagado: sql<number>`COALESCE(SUM(${schema.multas.montoPagado}), 0)`,
-      saldoPendiente: sql<number>`COALESCE(SUM(${schema.multas.saldoPendiente}), 0)`,
-    })
+  const multasPagadasRow = db
+    .select({ total: sql<number>`COALESCE(SUM(${schema.multas.montoPagado}), 0)` })
     .from(schema.multas)
-    .where(eq(schema.multas.socioId, id))
+    .where(and(eq(schema.multas.socioId, id), eq(schema.multas.estado, 'pagado')))
+    .get();
+
+  const multasSaldoRow = db
+    .select({ total: sql<number>`COALESCE(SUM(${schema.multas.saldoPendiente}), 0)` })
+    .from(schema.multas)
+    .where(and(eq(schema.multas.socioId, id), eq(schema.multas.estado, 'pendiente')))
     .get();
 
   const aportesPendientes = db
@@ -168,8 +171,8 @@ reportes.get('/resumen-socio/:id', (c) => {
   return c.json({
     socio: { id: socio.id, nombre: socio.nombre, apellido: socio.apellidoPaterno },
     totalAportado: Number(totalAportadoRow?.total ?? 0),
-    multasPagadas: Number(multasRow?.totalPagado ?? 0),
-    saldoPendienteMultas: Number(multasRow?.saldoPendiente ?? 0),
+    multasPagadas: Number(multasPagadasRow?.total ?? 0),
+    saldoPendienteMultas: Number(multasSaldoRow?.total ?? 0),
     aportesPendientes: aportesPendientes.length,
     multasPendientesCount: multasPendientes.length,
   });
