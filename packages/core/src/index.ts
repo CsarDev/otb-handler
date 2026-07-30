@@ -92,10 +92,13 @@ export type Egreso = {
 };
 
 export type BalanceReport = {
-  totalIngresos: number;
-  totalEgresos: number;
+  gestion: number;
+  mes: number;
+  ingresos: number;
+  egresos: number;
   neto: number;
-  desglose: Array<{ categoria: string; monto: number }>;
+  ingresosPorCategoria: Array<{ categoria: string; total: number }>;
+  egresosPorCategoria: Array<{ categoria: string; total: number }>;
 };
 
 export type LibroDiarioEntry = Movimiento & {
@@ -104,10 +107,12 @@ export type LibroDiarioEntry = Movimiento & {
 };
 
 export type ResumenSocioReport = {
+  socio: { id: string; nombre: string; apellido: string };
   totalAportado: number;
   multasPagadas: number;
-  saldoPendiente: number;
-  socio: { id: string; nombre: string; apellidoPaterno: string };
+  saldoPendienteMultas: number;
+  aportesPendientes: number;
+  multasPendientesCount: number;
 };
 
 export type PagoParcialRequest = {

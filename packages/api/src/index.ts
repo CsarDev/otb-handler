@@ -11,6 +11,7 @@ import actividadesRouter from './routes/actividades';
 import dashboardRouter from './routes/dashboard';
 import configRouter from './routes/config';
 import tiposActividadRouter from './routes/tipos-actividad';
+import reportesRouter from './routes/reportes';
 
 const api = new Hono();
 
@@ -28,6 +29,7 @@ api.route('/api/actividades', actividadesRouter);
 api.route('/api/dashboard', dashboardRouter);
 api.route('/api/tipos-actividad', tiposActividadRouter);
 api.route('/api/config', configRouter);
+api.route('/api/reportes', reportesRouter);
 
 export default api;
 export type ApiApp = typeof api;

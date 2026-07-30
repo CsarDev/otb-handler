@@ -8,6 +8,9 @@ import type {
   Asistencia,
   TipoActividad,
   OTBConfig,
+  BalanceReport,
+  LibroDiarioEntry,
+  ResumenSocioReport,
 } from '@otb/core';
 
 const BASE = '/api';
@@ -109,6 +112,14 @@ type AppState = {
   addTipoActividad: (tipo: TipoActividad) => Promise<void>;
   updateTipoActividad: (id: string, data: Partial<TipoActividad>) => Promise<void>;
   removeTipoActividad: (id: string) => Promise<void>;
+
+  balanceReport: BalanceReport | null;
+  libroDiario: LibroDiarioEntry[];
+  resumenSocio: ResumenSocioReport | null;
+  reportsLoading: boolean;
+  fetchBalance: (gestion?: number, mes?: string) => Promise<void>;
+  fetchLibroDiario: (fechaDesde?: string, fechaHasta?: string) => Promise<void>;
+  fetchResumenSocio: (socioId: string) => Promise<void>;
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -326,5 +337,45 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeTipoActividad: async (id) => {
     const tipos = await request<TipoActividad[]>(`/tipos-actividad/${id}`, { method: 'DELETE' });
     set({ tiposActividad: tipos });
+  },
+
+  balanceReport: null,
+  libroDiario: [],
+  resumenSocio: null,
+  reportsLoading: false,
+  fetchBalance: async (gestion, mes) => {
+    set({ reportsLoading: true });
+    try {
+      const params = new URLSearchParams();
+      if (gestion) params.set('gestion', String(gestion));
+      if (mes) params.set('mes', mes);
+      const qs = params.toString() ? `?${params}` : '';
+      const data = await request<BalanceReport>(`/reportes/balance${qs}`);
+      set({ balanceReport: data, reportsLoading: false });
+    } catch (e) {
+      set({ reportsLoading: false });
+    }
+  },
+  fetchLibroDiario: async (fechaDesde, fechaHasta) => {
+    set({ reportsLoading: true });
+    try {
+      const params = new URLSearchParams();
+      if (fechaDesde) params.set('fechaDesde', fechaDesde);
+      if (fechaHasta) params.set('fechaHasta', fechaHasta);
+      const qs = params.toString() ? `?${params}` : '';
+      const data = await request<LibroDiarioEntry[]>(`/reportes/libro-diario${qs}`);
+      set({ libroDiario: data, reportsLoading: false });
+    } catch (e) {
+      set({ reportsLoading: false });
+    }
+  },
+  fetchResumenSocio: async (socioId) => {
+    set({ reportsLoading: true });
+    try {
+      const data = await request<ResumenSocioReport>(`/reportes/resumen-socio/${socioId}`);
+      set({ resumenSocio: data, reportsLoading: false });
+    } catch (e) {
+      set({ reportsLoading: false });
+    }
   },
 }));
