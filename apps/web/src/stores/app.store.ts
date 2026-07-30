@@ -60,45 +60,45 @@ type AppState = {
   sociosError: string | null;
   fetchSocios: (search?: string) => Promise<void>;
   createSocio: (data: Partial<Socio>) => Promise<Socio>;
-  updateSocio: (id: number, data: Partial<Socio>) => Promise<Socio>;
-  deleteSocio: (id: number) => Promise<void>;
+  updateSocio: (id: string, data: Partial<Socio>) => Promise<Socio>;
+  deleteSocio: (id: string) => Promise<void>;
 
   aportes: Aporte[];
   aportesLoading: boolean;
   aportesError: string | null;
   fetchAportes: (filters?: AporteFilters) => Promise<void>;
   createAporte: (data: Partial<Aporte>) => Promise<Aporte>;
-  pagarAporte: (id: number, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Aporte>;
+  pagarAporte: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Aporte>;
 
   multas: Multa[];
   multasLoading: boolean;
   multasError: string | null;
   fetchMultas: (filters?: MultaFilters) => Promise<void>;
   createMulta: (data: Partial<Multa>) => Promise<Multa>;
-  pagarMulta: (id: number, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Multa>;
-  anularMulta: (id: number) => Promise<void>;
+  pagarMulta: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Multa>;
+  anularMulta: (id: string) => Promise<void>;
 
   egresos: Egreso[];
   egresosLoading: boolean;
   egresosError: string | null;
   fetchEgresos: (filters?: EgresoFilters) => Promise<void>;
   createEgreso: (data: Partial<Egreso>) => Promise<Egreso>;
-  updateEgreso: (id: number, data: Partial<Egreso>) => Promise<Egreso>;
-  deleteEgreso: (id: number) => Promise<void>;
+  updateEgreso: (id: string, data: Partial<Egreso>) => Promise<Egreso>;
+  deleteEgreso: (id: string) => Promise<void>;
 
   actividades: Actividad[];
   actividadesLoading: boolean;
   actividadesError: string | null;
   fetchActividades: () => Promise<void>;
   createActividad: (data: Partial<Actividad>) => Promise<Actividad>;
-  updateActividad: (id: number, data: Partial<Actividad>) => Promise<Actividad>;
-  deleteActividad: (id: number) => Promise<void>;
+  updateActividad: (id: string, data: Partial<Actividad>) => Promise<Actividad>;
+  deleteActividad: (id: string) => Promise<void>;
 
   asistenciaRecords: Asistencia[];
   asistenciaLoading: boolean;
   asistenciaError: string | null;
-  fetchAsistencia: (actividadId: number) => Promise<void>;
-  saveAsistencia: (actividadId: number, registros: { socioId: number; tipoAsistencia: string; minutosTardanza?: number }[]) => Promise<void>;
+  fetchAsistencia: (actividadId: string) => Promise<void>;
+  saveAsistencia: (actividadId: string, registros: { socioId: string; tipoAsistencia: string; minutosTardanza?: number }[]) => Promise<void>;
 
   config: OTBConfig | null;
   tiposActividad: TipoActividad[];

@@ -1,86 +1,87 @@
 export type Socio = {
-  id: number;
+  id: string;
   nombre: string;
   apellidoPaterno: string;
-  apellidoMaterno: string;
-  ci: string;
-  telefono: string;
-  email: string;
-  ocupacion: string;
-  direccion: string;
-  fechaNac: string;
-  fechaIng: string;
-  fechaAlta: string;
+  apellidoMaterno: string | null;
+  ci: string | null;
+  telefono: string | null;
+  email: string | null;
+  ocupacion: string | null;
+  direccion: string | null;
+  fechaNac: string | null;
+  fechaIng: string | null;
+  fechaAlta: string | null;
   aporteBase: number;
-  estado: 'activo' | 'inactivo';
+  estado: 'activo' | 'inactivo' | 'suspendido';
 };
 
 export type TipoActividad = {
+  id: string;
   nombre: string;
-  opciones: string[];
-  multas: number[];
+  opciones: string;
+  multas: string | null;
   tolerancia: number;
 };
 
 export type Actividad = {
-  id: number;
-  tipo: string;
+  id: string;
+  tipoId: string;
   fecha: string;
-  hora: string;
-  descripcion: string;
+  hora: string | null;
+  descripcion: string | null;
 };
 
 export type Asistencia = {
-  id: number;
-  actividadId: number;
-  socioId: number;
-  tipoAsistencia: string;
+  id: string;
+  actividadId: string;
+  socioId: string;
+  tipoAsistencia: 'asistio' | 'falta' | 'tardanza' | 'justificado';
   minutosTardanza: number;
   fechaReg: string;
 };
 
 export type Aporte = {
-  id: number;
-  socioId: number;
-  mes: number;
-  gestion: number;
-  tipo: 'mensual' | 'individual' | 'anual';
+  id: string;
+  socioId: string;
+  mes: number | null;
+  gestion: number | null;
+  tipo: 'mensual' | 'extraordinario';
   montoBase: number;
-  numeroRecibo: string;
-  fechaPago: string;
-  estado: 'pagado' | 'pendiente';
+  numeroRecibo: string | null;
+  fechaPago: string | null;
+  estado: 'pendiente' | 'pagado' | 'anulado';
 };
 
 export type Multa = {
-  id: number;
-  socioId: number;
-  actividadId: number;
+  id: string;
+  socioId: string;
+  actividadId: string | null;
   concepto: string;
   monto: number;
   fechaGen: string;
-  fechaPago: string;
-  estado: 'pagado' | 'pendiente';
+  fechaPago: string | null;
+  estado: 'pendiente' | 'pagado' | 'anulado';
 };
 
 export type Movimiento = {
-  id: number;
-  tipo: 'aporte' | 'multa' | 'egreso';
-  referenciaId: number;
-  socioId: number;
+  id: string;
+  tipo: 'ingreso' | 'egreso';
+  referenciaId: string | null;
+  socioId: string | null;
   monto: number;
-  numeroRecibo: string;
-  nota: string;
+  numeroRecibo: string | null;
+  nota: string | null;
   fecha: string;
 };
 
 export type Egreso = {
-  id: number;
+  id: string;
   categoria: string;
   beneficiario: string;
   monto: number;
-  descripcion: string;
+  descripcion: string | null;
   fecha: string;
-  numRecibo: string;
+  numRecibo: string | null;
 };
 
 export type OTBConfig = {

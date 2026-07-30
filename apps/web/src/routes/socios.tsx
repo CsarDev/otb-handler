@@ -1,38 +1,40 @@
-import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 
-export const Route = createFileRoute('/socios')({
-  component: SociosPage,
-});
-
 const socioSchema = z.object({
   nombre: z.string().min(1, 'Requerido'),
   apellidoPaterno: z.string().min(1, 'Requerido'),
-  apellidoMaterno: z.string().optional().default(''),
-  ci: z.string().optional().default(''),
-  telefono: z.string().optional().default(''),
-  email: z.string().optional().default(''),
-  ocupacion: z.string().optional().default(''),
-  direccion: z.string().optional().default(''),
-  fechaNac: z.string().optional().default(''),
-  fechaIng: z.string().optional().default(''),
-  fechaAlta: z.string().optional().default(''),
+  apellidoMaterno: z.string().nullish().default(''),
+  ci: z.string().nullish().default(''),
+  telefono: z.string().nullish().default(''),
+  email: z.string().nullish().default(''),
+  ocupacion: z.string().nullish().default(''),
+  direccion: z.string().nullish().default(''),
+  fechaNac: z.string().nullish().default(''),
+  fechaIng: z.string().nullish().default(''),
+  fechaAlta: z.string().nullish().default(''),
   aporteBase: z.coerce.number().min(0).default(0),
 });
 
 type SocioForm = z.infer<typeof socioSchema>;
 
-function SociosPage() {
+const defaultSocio: SocioForm = {
+  nombre: '', apellidoPaterno: '', apellidoMaterno: '',
+  ci: '', telefono: '', email: '', ocupacion: '', direccion: '',
+  fechaNac: '', fechaIng: '', fechaAlta: '',
+  aporteBase: 0,
+};
+
+export default function SociosPage() {
   const { socios, sociosLoading, sociosError, fetchSocios, createSocio, updateSocio, deleteSocio } = useAppStore();
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<{ id: number } & SocioForm | null>(null);
+  const [editing, setEditing] = useState<{ id: string } & SocioForm | null>(null);
 
-  const form = useForm<SocioForm>({ resolver: zodResolver(socioSchema) as any, defaultValues: socioSchema.parse({}) });
+  const form = useForm<SocioForm>({ resolver: zodResolver(socioSchema) as any, defaultValues: defaultSocio });
 
   useEffect(() => {
     fetchSocios();
@@ -45,7 +47,7 @@ function SociosPage() {
 
   function openCreate() {
     setEditing(null);
-    form.reset(socioSchema.parse({}));
+    form.reset(defaultSocio);
     setModalOpen(true);
   }
 
@@ -65,7 +67,7 @@ function SociosPage() {
     setEditing(null);
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete(id: string) {
     if (confirm('¿Desactivar este socio?')) {
       await deleteSocio(id);
     }

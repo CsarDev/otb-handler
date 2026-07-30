@@ -1,40 +1,35 @@
-import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 
-export const Route = createFileRoute('/multas')({
-  component: MultasPage,
-});
-
 const createMultaSchema = z.object({
-  socioId: z.coerce.number().min(1, 'Seleccione un socio'),
-  actividadId: z.coerce.number().optional().default(0),
+  socioId: z.string().min(1, 'Seleccione un socio'),
+  actividadId: z.string().nullish().default(''),
   concepto: z.string().min(1, 'Concepto requerido'),
   monto: z.coerce.number().min(1, 'Monto requerido'),
 });
 
 const pagarSchema = z.object({
   monto: z.coerce.number().min(0.01, 'Monto requerido'),
-  numeroRecibo: z.string().optional().default(''),
+  numeroRecibo: z.string().nullish().default(''),
   fechaPago: z.string().min(1, 'Fecha requerida'),
 });
 
 type CreateMultaForm = z.infer<typeof createMultaSchema>;
 type PagarForm = z.infer<typeof pagarSchema>;
 
-function MultasPage() {
+export default function MultasPage() {
   const { multas, multasLoading, multasError, fetchMultas, createMulta, pagarMulta, anularMulta } = useAppStore();
   const { socios, fetchSocios } = useAppStore();
   const [filters, setFilters] = useState({ socioId: '', estado: '' });
   const [createOpen, setCreateOpen] = useState(false);
-  const [payingId, setPayingId] = useState<number | null>(null);
+  const [payingId, setPayingId] = useState<string | null>(null);
 
   const createForm = useForm<CreateMultaForm>({
     resolver: zodResolver(createMultaSchema) as any,
-    defaultValues: { socioId: 0, actividadId: 0, concepto: '', monto: 0 },
+    defaultValues: { socioId: '', actividadId: '', concepto: '', monto: 0 },
   });
 
   const payForm = useForm<PagarForm>({
@@ -61,12 +56,12 @@ function MultasPage() {
 
   async function handlePay(data: PagarForm) {
     if (payingId === null) return;
-    await pagarMulta(payingId, data);
+    await pagarMulta(payingId, { ...data, numeroRecibo: data.numeroRecibo ?? undefined });
     setPayingId(null);
     payForm.reset();
   }
 
-  async function handleAnular(id: number) {
+  async function handleAnular(id: string) {
     if (confirm('¿Anular esta multa?')) {
       await anularMulta(id);
     }

@@ -1,4 +1,4 @@
-import { serve } from 'bun';
+import { serve } from '@hono/node-server';
 import api from '@otb/api';
 import { logger } from '@otb/logger';
 

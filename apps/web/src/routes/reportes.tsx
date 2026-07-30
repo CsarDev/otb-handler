@@ -1,10 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router';
-
-export const Route = createFileRoute('/reportes')({
-  component: ReportesPage,
-});
-
-function ReportesPage() {
+export default function ReportesPage() {
   return (
     <div>
       <h2 className="mb-6 text-2xl font-bold text-gray-900">Reportes</h2>

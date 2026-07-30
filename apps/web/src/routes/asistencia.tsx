@@ -1,13 +1,5 @@
-import { createFileRoute, useSearch } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../stores/app.store';
-
-export const Route = createFileRoute('/asistencia')({
-  validateSearch: (search: Record<string, unknown>) => ({
-    actividadId: search.actividadId ? Number(search.actividadId) : undefined,
-  }),
-  component: AsistenciaPage,
-});
 
 const TIPOS_ASISTENCIA = [
   { value: 'asistio', label: 'Presente', class: 'text-green-700 bg-green-50 border-green-300' },
@@ -16,14 +8,13 @@ const TIPOS_ASISTENCIA = [
   { value: 'justificado', label: 'Justificado', class: 'text-blue-700 bg-blue-50 border-blue-300' },
 ] as const;
 
-function AsistenciaPage() {
-  const search = useSearch({ from: Route.id }) as { actividadId?: number };
-  const initialActividadId = search.actividadId;
+export default function AsistenciaPage() {
+  const initialActividadId = undefined;
   const { actividades, actividadesLoading: actsLoading, fetchActividades } = useAppStore();
   const { socios, sociosLoading: sociosLoading_, fetchSocios } = useAppStore();
   const { asistenciaRecords, asistenciaLoading, asistenciaError, fetchAsistencia, saveAsistencia } = useAppStore();
-  const [selectedActividadId, setSelectedActividadId] = useState<number | undefined>(initialActividadId);
-  const [registros, setRegistros] = useState<Record<number, { tipoAsistencia: string; minutosTardanza: number }>>({});
+  const [selectedActividadId, setSelectedActividadId] = useState<string | undefined>(initialActividadId);
+  const [registros, setRegistros] = useState<Record<string, { tipoAsistencia: string; minutosTardanza: number }>>({});
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
 
@@ -40,13 +31,13 @@ function AsistenciaPage() {
 
   useEffect(() => {
     if (asistenciaRecords.length > 0 && selectedActividadId) {
-      const map: Record<number, { tipoAsistencia: string; minutosTardanza: number }> = {};
+      const map: Record<string, { tipoAsistencia: string; minutosTardanza: number }> = {};
       for (const r of asistenciaRecords) {
         map[r.socioId] = { tipoAsistencia: r.tipoAsistencia, minutosTardanza: r.minutosTardanza ?? 0 };
       }
       setRegistros(map);
     } else if (selectedActividadId && socios.length > 0) {
-      const map: Record<number, { tipoAsistencia: string; minutosTardanza: number }> = {};
+      const map: Record<string, { tipoAsistencia: string; minutosTardanza: number }> = {};
       for (const s of socios) {
         if (s.estado === 'activo') {
           map[s.id] = { tipoAsistencia: 'asistio', minutosTardanza: 0 };
@@ -62,7 +53,7 @@ function AsistenciaPage() {
     setSuccess(false);
     try {
       const records = Object.entries(registros).map(([socioId, data]) => ({
-        socioId: Number(socioId),
+        socioId,
         tipoAsistencia: data.tipoAsistencia,
         minutosTardanza: data.minutosTardanza,
       }));
@@ -74,14 +65,14 @@ function AsistenciaPage() {
     }
   }
 
-  function setTipo(socioId: number, tipo: string) {
+  function setTipo(socioId: string, tipo: string) {
     setRegistros((prev) => ({
       ...prev,
       [socioId]: { ...prev[socioId], tipoAsistencia: tipo, minutosTardanza: tipo === 'tardanza' ? prev[socioId]?.minutosTardanza || 15 : 0 },
     }));
   }
 
-  function setMinutos(socioId: number, minutos: number) {
+  function setMinutos(socioId: string, minutos: number) {
     setRegistros((prev) => ({
       ...prev,
       [socioId]: { ...prev[socioId], minutosTardanza: minutos },
@@ -115,13 +106,13 @@ function AsistenciaPage() {
         <label className="mb-1 block text-sm font-medium text-gray-600">Seleccionar Actividad</label>
         <select
           value={selectedActividadId ?? ''}
-          onChange={(e) => setSelectedActividadId(e.target.value ? Number(e.target.value) : undefined)}
+          onChange={(e) => setSelectedActividadId(e.target.value || undefined)}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none sm:w-80"
         >
           <option value="">Seleccionar actividad...</option>
           {actividades.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.tipo} - {a.fecha}{a.descripcion ? ` - ${a.descripcion}` : ''}
+              {a.fecha}{a.descripcion ? ` - ${a.descripcion}` : ''}
             </option>
           ))}
         </select>

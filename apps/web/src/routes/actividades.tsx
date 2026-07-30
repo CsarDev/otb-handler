@@ -1,48 +1,41 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 
-export const Route = createFileRoute('/actividades')({
-  component: ActividadesPage,
-});
-
 const actividadSchema = z.object({
-  tipo: z.string().min(1, 'Requerido'),
-  fecha: z.string().min(1, 'Requerido'),
-  hora: z.string().optional().default(''),
-  descripcion: z.string().min(1, 'Requerido'),
+  tipoId: z.string().min(1, 'Requerido'),
+  fecha: z.string().min(1, 'Fecha requerida'),
+  hora: z.string().nullish().default(''),
+  descripcion: z.string().nullish().default(''),
 });
 
 type ActividadForm = z.infer<typeof actividadSchema>;
 
-function ActividadesPage() {
-  const { actividades, actividadesLoading, actividadesError, fetchActividades, createActividad, updateActividad, deleteActividad } = useAppStore();
-  const { config, fetchConfig } = useAppStore();
+export default function ActividadesPage() {
+  const { actividades, actividadesLoading, actividadesError, fetchActividades, createActividad, updateActividad, deleteActividad, tiposActividad } = useAppStore();
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<{ id: number } & ActividadForm | null>(null);
+  const [editing, setEditing] = useState<{ id: string } & ActividadForm | null>(null);
 
   const form = useForm<ActividadForm>({
     resolver: zodResolver(actividadSchema) as any,
-    defaultValues: actividadSchema.parse({}),
+    defaultValues: { tipoId: '', fecha: '', hora: '', descripcion: '' },
   });
 
   useEffect(() => {
     fetchActividades();
-    fetchConfig();
-  }, [fetchActividades, fetchConfig]);
+  }, [fetchActividades]);
 
   function openCreate() {
     setEditing(null);
-    form.reset(actividadSchema.parse({}));
+    form.reset({ tipoId: '', fecha: '', hora: '', descripcion: '' });
     setModalOpen(true);
   }
 
   function openEdit(a: typeof actividades[0]) {
-    setEditing({ id: a.id, ...actividadSchema.parse(a) });
-    form.reset(actividadSchema.parse(a));
+    setEditing({ id: a.id, tipoId: a.tipoId, fecha: a.fecha, hora: a.hora ?? '', descripcion: a.descripcion ?? '' });
+    form.reset({ tipoId: a.tipoId, fecha: a.fecha, hora: a.hora ?? '', descripcion: a.descripcion ?? '' });
     setModalOpen(true);
   }
 
@@ -56,7 +49,7 @@ function ActividadesPage() {
     setEditing(null);
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete(id: string) {
     if (confirm('¿Eliminar esta actividad?')) {
       await deleteActividad(id);
     }
@@ -84,42 +77,43 @@ function ActividadesPage() {
       )}
 
       {actividades.length > 0 && (
-        <div className="space-y-3">
-          {actividades.map((a) => (
-            <div key={a.id} className="flex items-center justify-between rounded-xl border bg-white p-4 shadow-sm">
-              <div className="flex-1">
-                <div className="flex items-center gap-3">
-                  <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
-                    {a.tipo}
-                  </span>
-                  <span className="text-sm text-gray-500">{a.fecha}</span>
-                  {a.hora && <span className="text-sm text-gray-400">{a.hora}</span>}
-                </div>
-                <p className="mt-1 text-sm text-gray-700">{a.descripcion}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Link
-                  to="/asistencia"
-                  search={{ actividadId: a.id }}
-                  className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50"
-                >
-                  Asistencia
-                </Link>
-                <button
-                  onClick={() => openEdit(a)}
-                  className="rounded px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
-                >
-                  Editar
-                </button>
-                <button
-                  onClick={() => handleDelete(a.id)}
-                  className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
-                >
-                  Eliminar
-                </button>
-              </div>
-            </div>
-          ))}
+        <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
+              <tr>
+                <th className="px-4 py-3">Tipo</th>
+                <th className="px-4 py-3">Fecha</th>
+                <th className="px-4 py-3">Hora</th>
+                <th className="px-4 py-3">Descripción</th>
+                <th className="px-4 py-3">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {actividades.map((a) => (
+                <tr key={a.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3">{a.tipoId}</td>
+
+                  <td className="px-4 py-3">{a.fecha}</td>
+                  <td className="px-4 py-3">{a.hora}</td>
+                  <td className="max-w-xs truncate px-4 py-3">{a.descripcion || '—'}</td>
+                  <td className="flex gap-2 px-4 py-3">
+                    <button
+                      onClick={() => openEdit(a)}
+                      className="rounded px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      onClick={() => handleDelete(a.id)}
+                      className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                    >
+                      Eliminar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -132,16 +126,13 @@ function ActividadesPage() {
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">Tipo</label>
-                <select {...form.register('tipo')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                <select {...form.register('tipoId')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                   <option value="">Seleccionar...</option>
-                  <option value="Asamblea">Asamblea</option>
-                  <option value="Evento Social">Evento Social</option>
-                  <option value="Reunión">Reunión</option>
-                  <option value="Taller">Taller</option>
-                  <option value="Deporte">Deporte</option>
-                  <option value="Otro">Otro</option>
+                  {tiposActividad.map((t) => (
+                    <option key={t.nombre} value={t.nombre}>{t.nombre}</option>
+                  ))}
                 </select>
-                {form.formState.errors.tipo && <p className="text-xs text-red-500">{form.formState.errors.tipo.message}</p>}
+                {form.formState.errors.tipoId && <p className="text-xs text-red-500">{form.formState.errors.tipoId.message}</p>}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -152,12 +143,12 @@ function ActividadesPage() {
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">Hora</label>
                   <input type="time" {...form.register('hora')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+                  {form.formState.errors.hora && <p className="text-xs text-red-500">{form.formState.errors.hora.message}</p>}
                 </div>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">Descripción</label>
-                <textarea {...form.register('descripcion')} rows={3} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
-                {form.formState.errors.descripcion && <p className="text-xs text-red-500">{form.formState.errors.descripcion.message}</p>}
+                <textarea {...form.register('descripcion')} rows={2} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
               </div>
               <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={() => setModalOpen(false)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">

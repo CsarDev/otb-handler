@@ -1,4 +1,4 @@
-import { createRootRoute, Link, Outlet, useLocation } from '@tanstack/react-router';
+import { Link, Outlet, useLocation } from '@tanstack/react-router';
 import { useState } from 'react';
 
 const navItems = [
@@ -32,11 +32,7 @@ function NavLink({ to, label, onClick }: { to: string; label: string; onClick?: 
   );
 }
 
-export const Route = createRootRoute({
-  component: Layout,
-});
-
-function Layout() {
+export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (

@@ -1,41 +1,36 @@
-import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 
-export const Route = createFileRoute('/aportes')({
-  component: AportesPage,
-});
-
 const createAporteSchema = z.object({
-  socioId: z.coerce.number().min(1, 'Seleccione un socio'),
+  socioId: z.string().min(1, 'Seleccione un socio'),
   mes: z.coerce.number().min(1).max(12),
   gestion: z.coerce.number().min(2000),
-  tipo: z.enum(['mensual', 'individual', 'anual']),
+  tipo: z.enum(['mensual', 'extraordinario']),
   montoBase: z.coerce.number().min(1, 'Monto requerido'),
 });
 
 const pagarSchema = z.object({
   monto: z.coerce.number().min(0.01, 'Monto requerido'),
-  numeroRecibo: z.string().optional().default(''),
+  numeroRecibo: z.string().nullish().default(''),
   fechaPago: z.string().min(1, 'Fecha requerida'),
 });
 
 type CreateAporteForm = z.infer<typeof createAporteSchema>;
 type PagarForm = z.infer<typeof pagarSchema>;
 
-function AportesPage() {
+export default function AportesPage() {
   const { aportes, aportesLoading, aportesError, fetchAportes, createAporte, pagarAporte } = useAppStore();
   const { socios, fetchSocios } = useAppStore();
   const [filters, setFilters] = useState({ socioId: '', mes: '', gestion: '', estado: '' });
   const [createOpen, setCreateOpen] = useState(false);
-  const [payingId, setPayingId] = useState<number | null>(null);
+  const [payingId, setPayingId] = useState<string | null>(null);
 
   const createForm = useForm<CreateAporteForm>({
     resolver: zodResolver(createAporteSchema) as any,
-    defaultValues: { socioId: 0, mes: new Date().getMonth() + 1, gestion: new Date().getFullYear(), tipo: 'mensual', montoBase: 0 },
+    defaultValues: { socioId: '', mes: new Date().getMonth() + 1, gestion: new Date().getFullYear(), tipo: 'mensual', montoBase: 0 },
   });
 
   const payForm = useForm<PagarForm>({
@@ -64,7 +59,7 @@ function AportesPage() {
 
   async function handlePay(data: PagarForm) {
     if (payingId === null) return;
-    await pagarAporte(payingId, data);
+    await pagarAporte(payingId, { ...data, numeroRecibo: data.numeroRecibo ?? undefined });
     setPayingId(null);
     payForm.reset();
   }

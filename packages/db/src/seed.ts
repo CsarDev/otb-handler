@@ -257,6 +257,7 @@ function genMovimientosEgresos() {
 }
 
 const modulesConfigData = [
+  { id: id(), moduleName: 'otb-core', enabled: true, config: JSON.stringify({ nombreOTB: 'OTB Villa Esperanza', gestionActual: 2025, aporteMensualBase: 30, diasGraciaAporte: 10, toleranciaMinutos: 15 }) },
   { id: id(), moduleName: 'socios', enabled: true, config: JSON.stringify({ version: '1.0.0' }) },
   { id: id(), moduleName: 'asistencia', enabled: true, config: JSON.stringify({ version: '1.0.0' }) },
   { id: id(), moduleName: 'aportes', enabled: true, config: JSON.stringify({ version: '1.0.0' }) },

@@ -1,13 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
-
-export const Route = createFileRoute('/config')({
-  component: ConfigPage,
-});
 
 const configSchema = z.object({
   nombreOTB: z.string().min(1, 'Requerido'),
@@ -19,6 +14,11 @@ const configSchema = z.object({
 
 type ConfigForm = z.infer<typeof configSchema>;
 
+const defaultConfig: ConfigForm = {
+  nombreOTB: '', gestionActual: new Date().getFullYear(),
+  aporteMensualBase: 0, diasGraciaAporte: 0, toleranciaMinutos: 15,
+};
+
 const tipoSchema = z.object({
   nombre: z.string().min(1, 'Requerido'),
   tolerancia: z.coerce.number().min(0).default(15),
@@ -26,7 +26,7 @@ const tipoSchema = z.object({
 
 type TipoForm = z.infer<typeof tipoSchema>;
 
-function ConfigPage() {
+export default function ConfigPage() {
   const {
     config, configLoading, configError,
     fetchConfig, updateConfig,
@@ -38,7 +38,7 @@ function ConfigPage() {
 
   const configForm = useForm<ConfigForm>({
     resolver: zodResolver(configSchema) as any,
-    defaultValues: configSchema.parse({}),
+    defaultValues: defaultConfig,
   });
 
   const tipoForm = useForm<TipoForm>({
@@ -68,11 +68,12 @@ function ConfigPage() {
       return;
     }
     await addTipoActividad({
+      id: crypto.randomUUID(),
       nombre: data.nombre,
-      opciones: [],
-      multas: [],
+      opciones: '[]',
+      multas: null,
       tolerancia: data.tolerancia,
-    });
+    } as any);
     setShowTipoForm(false);
     tipoForm.reset({ nombre: '', tolerancia: 15 });
   }
