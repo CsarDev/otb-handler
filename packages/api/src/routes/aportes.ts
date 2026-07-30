@@ -1,17 +1,20 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and, getTableColumns } from 'drizzle-orm';
+import { eq, and, getTableColumns, lte, gte } from 'drizzle-orm';
 
 const aportes = new Hono();
 
 aportes.get('/', (c) => {
-  const { socioId, mes, gestion, estado } = c.req.query();
+  const { socioId, mes, gestion, estado, tipo, fechaDesde, fechaHasta } = c.req.query();
   const filters: any[] = [];
 
   if (socioId) filters.push(eq(schema.aportes.socioId, socioId));
   if (mes) filters.push(eq(schema.aportes.mes, Number(mes)));
   if (gestion) filters.push(eq(schema.aportes.gestion, Number(gestion)));
+  if (tipo) filters.push(eq(schema.aportes.tipo, tipo));
   if (estado) filters.push(eq(schema.aportes.estado, estado as 'pendiente' | 'pagado' | 'anulado'));
+  if (fechaDesde) filters.push(gte(schema.aportes.fechaPago, fechaDesde));
+  if (fechaHasta) filters.push(lte(schema.aportes.fechaPago, fechaHasta));
 
   const query = db
     .select({
@@ -25,6 +28,67 @@ aportes.get('/', (c) => {
   return c.json(
     filters.length ? query.where(and(...filters)).all() : query.all(),
   );
+});
+
+aportes.post('/bulk', async (c) => {
+  const body = await c.req.json();
+
+  if (!body.socioIds?.length || !body.montoBase) {
+    return c.json({ error: 'socioIds (array) and montoBase are required' }, 400);
+  }
+
+  const socioIds: string[] = body.socioIds;
+  const tipo = body.tipo ?? 'mensual';
+  const montoBase = Number(body.montoBase);
+  const gestion = Number(body.gestion ?? new Date().getFullYear());
+  const mes = body.mes ? Number(body.mes) : undefined;
+  const meses = body.meses ? Number(body.meses) : 1;
+
+  const created = db.transaction((tx) => {
+    const items: Array<{ id: string; socioId: string; mes: number | undefined; gestion: number; tipo: string; montoBase: number }> = [];
+
+    for (const socioId of socioIds) {
+      if (tipo === 'anual' && body.meses) {
+        for (let m = 1; m <= Number(body.meses); m++) {
+          const id = crypto.randomUUID();
+          tx.insert(schema.aportes)
+            .values({
+              id,
+              socioId,
+              mes: m,
+              gestion,
+              tipo,
+              montoBase,
+              montoPagado: 0,
+              saldoPendiente: montoBase,
+              estado: 'pendiente',
+            })
+            .run();
+          items.push({ id, socioId, mes: m, gestion, tipo, montoBase });
+        }
+      } else {
+        const id = crypto.randomUUID();
+        tx.insert(schema.aportes)
+          .values({
+            id,
+            socioId,
+            mes: mes ?? new Date().getMonth() + 1,
+            gestion,
+            tipo,
+            montoBase,
+            montoPagado: 0,
+            saldoPendiente: montoBase,
+            estado: 'pendiente',
+          })
+          .run();
+        items.push({ id, socioId, mes: mes ?? new Date().getMonth() + 1, gestion, tipo, montoBase });
+      }
+    }
+
+    return items;
+  });
+
+  return c.json({ count: created.length, items: created }, 201);
 });
 
 aportes.get('/socio/:socioId', (c) => {
@@ -66,8 +130,14 @@ aportes.post('/:id/pagar', async (c) => {
 
   if (!aporte) return c.json({ error: 'Aporte not found' }, 404);
   if (aporte.estado === 'pagado') return c.json({ error: 'Aporte already paid' }, 400);
+  if (aporte.estado === 'anulado') return c.json({ error: 'Aporte is voided' }, 400);
 
-  const montoPagado = body.monto ?? aporte.montoBase;
+  const montoAbono = body.monto !== undefined ? Number(body.monto) : aporte.saldoPendiente;
+  if (montoAbono <= 0) return c.json({ error: 'El monto debe ser mayor a 0' }, 400);
+  if (montoAbono > aporte.saldoPendiente) {
+    return c.json({ error: 'El monto no puede superar el saldo pendiente' }, 400);
+  }
+
   const fechaPago = body.fechaPago ?? new Date().toISOString().split('T')[0];
   const numeroRecibo = body.numeroRecibo;
 
@@ -78,19 +148,60 @@ aportes.post('/:id/pagar', async (c) => {
         tipo: 'ingreso',
         referenciaId: id,
         socioId: aporte.socioId,
-        monto: montoPagado,
+        monto: montoAbono,
         numeroRecibo,
         nota: `Pago de aporte - ${aporte.tipo}`,
         fecha: fechaPago,
       })
       .run();
 
+    const nuevoPagado = (aporte.montoPagado ?? 0) + montoAbono;
+    const nuevoSaldo = Math.max(0, (aporte.saldoPendiente ?? aporte.montoBase) - montoAbono);
+    const nuevoEstado = nuevoSaldo <= 0 ? 'pagado' : 'pendiente';
+
     return tx
       .update(schema.aportes)
       .set({
-        estado: 'pagado',
-        fechaPago,
-        numeroRecibo,
+        montoPagado: nuevoPagado,
+        saldoPendiente: nuevoSaldo,
+        estado: nuevoEstado,
+        ...(nuevoEstado === 'pagado' && { fechaPago, numeroRecibo }),
+      })
+      .where(eq(schema.aportes.id, id))
+      .returning()
+      .get();
+  });
+
+  return c.json(updated);
+});
+
+aportes.post('/:id/anular', async (c) => {
+  const { id } = c.req.param();
+  const body = await c.req.json();
+
+  if (!body.razon) return c.json({ error: 'razon is required' }, 400);
+
+  const aporte = db
+    .select()
+    .from(schema.aportes)
+    .where(eq(schema.aportes.id, id))
+    .get();
+
+  if (!aporte) return c.json({ error: 'Aporte not found' }, 404);
+  if (aporte.estado === 'anulado') return c.json({ error: 'Aporte already voided' }, 400);
+
+  const updated = db.transaction((tx) => {
+    tx.update(schema.movimientos)
+      .set({ anulado: 1, razonAnulacion: `Anulación de aporte: ${body.razon}` })
+      .where(eq(schema.movimientos.referenciaId, id))
+      .run();
+
+    return tx
+      .update(schema.aportes)
+      .set({
+        estado: 'anulado',
+        razonAnulacion: body.razon,
+        saldoPendiente: 0,
       })
       .where(eq(schema.aportes.id, id))
       .returning()
