@@ -91,7 +91,7 @@ export default function ActividadesPage() {
             <tbody className="divide-y">
               {actividades.map((a) => (
                 <tr key={a.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">{a.tipoId}</td>
+                  <td className="px-4 py-3">{a.tipoNombre ?? a.tipoId}</td>
 
                   <td className="px-4 py-3">{a.fecha}</td>
                   <td className="px-4 py-3">{a.hora}</td>
@@ -129,7 +129,7 @@ export default function ActividadesPage() {
                 <select {...form.register('tipoId')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                   <option value="">Seleccionar...</option>
                   {tiposActividad.map((t) => (
-                    <option key={t.nombre} value={t.nombre}>{t.nombre}</option>
+                    <option key={t.id} value={t.id}>{t.nombre}</option>
                   ))}
                 </select>
                 {form.formState.errors.tipoId && <p className="text-xs text-red-500">{form.formState.errors.tipoId.message}</p>}

@@ -42,13 +42,13 @@ Corregir bugs de UI en formularios que envían valores incorrectos o tienen opci
 
 ## Acceptance Criteria
 
-- [ ] Select de tipo en actividad usa `t.id` como value y `t.nombre` como display
-- [ ] Select de tipo en aporte solo tiene opciones "Mensual" y "Extraordinario"
-- [ ] Select de tipo en aporte tiene "mensual" preseleccionado por defecto
-- [ ] `addTipoActividad` no envía `id` en el body del POST
-- [ ] Tabla de multas muestra columna "Saldo Pendiente" con formato `Bs {m.saldoPendiente.toFixed(2)}`
-- [ ] Modal de pago de multa muestra "Saldo pendiente: Bs {monto}" y pre-fill con saldoPendiente
-- [ ] `pnpm typecheck` pasa sin errores
+- [x] Select de tipo en actividad usa `t.id` como value y `t.nombre` como display
+- [x] Select de tipo en aporte solo tiene opciones "Mensual" y "Extraordinario"
+- [x] Select de tipo en aporte tiene "mensual" preseleccionado por defecto
+- [x] `addTipoActividad` no envía `id` en el body del POST
+- [x] Tabla de multas muestra columna "Saldo Pendiente" con formato `Bs {m.saldoPendiente.toFixed(2)}`
+- [x] Modal de pago de multa muestra "Saldo pendiente: Bs {monto}" y pre-fill con saldoPendiente
+- [x] `pnpm typecheck` pasa sin errores
 
 ## Estimated Lines
 

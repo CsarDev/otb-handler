@@ -1,11 +1,20 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq } from 'drizzle-orm';
+import { eq, getTableColumns } from 'drizzle-orm';
 
 const actividades = new Hono();
 
 actividades.get('/', (c) => {
-  return c.json(db.select().from(schema.actividades).all());
+  return c.json(
+    db
+      .select({
+        ...getTableColumns(schema.actividades),
+        tipoNombre: schema.tiposActividad.nombre,
+      })
+      .from(schema.actividades)
+      .leftJoin(schema.tiposActividad, eq(schema.actividades.tipoId, schema.tiposActividad.id))
+      .all(),
+  );
 });
 
 actividades.post('/', async (c) => {

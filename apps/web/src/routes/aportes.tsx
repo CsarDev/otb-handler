@@ -129,7 +129,7 @@ export default function AportesPage() {
           <table className="w-full text-left text-sm">
             <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
               <tr>
-                <th className="px-4 py-3">Socio ID</th>
+                <th className="px-4 py-3">Socio</th>
                 <th className="px-4 py-3">Mes</th>
                 <th className="px-4 py-3">Gestión</th>
                 <th className="px-4 py-3">Tipo</th>
@@ -141,7 +141,7 @@ export default function AportesPage() {
             <tbody className="divide-y">
               {aportes.map((a) => (
                 <tr key={a.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">{a.socioId}</td>
+                  <td className="px-4 py-3">{a.socioNombre ? `${a.socioNombre} ${a.socioApellido ?? ''}` : a.socioId}</td>
                   <td className="px-4 py-3">{a.mes}</td>
                   <td className="px-4 py-3">{a.gestion}</td>
                   <td className="px-4 py-3">{a.tipo}</td>
@@ -203,8 +203,7 @@ export default function AportesPage() {
                 <label className="mb-1 block text-xs font-medium text-gray-600">Tipo</label>
                 <select {...createForm.register('tipo')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                   <option value="mensual">Mensual</option>
-                  <option value="individual">Individual</option>
-                  <option value="anual">Anual</option>
+                  <option value="extraordinario">Extraordinario</option>
                 </select>
               </div>
               <div>

@@ -24,17 +24,17 @@ Ninguna (no requiere cambios de schema).
 
 ## Acceptance Criteria
 
-- [ ] `PUT /api/egresos/:id` envuelve update-egreso + update-movimiento en `db.transaction()`
-- [ ] Movimiento se identifica por `referenciaId = :id AND tipo = 'egreso'`
-- [ ] Si `monto` cambia, se actualiza en el movimiento
-- [ ] Si `categoria`/`descripcion` cambia, se actualiza la `nota` del movimiento
-- [ ] Si no hay movimiento asociado, PUT actualiza solo el egreso (sin error)
-- [ ] `DELETE /api/egresos/:id` envuelve delete-movimiento + delete-egreso en `db.transaction()`
-- [ ] DELETE retorna 204 si se elimina correctamente
-- [ ] DELETE retorna 404 si el egreso no existe
-- [ ] Todas las operaciones dentro del callback usan `tx`, no `db`
-- [ ] Rollback completo si falla alguna operación de la transacción
-- [ ] `pnpm typecheck` pasa sin errores
+- [x] `PUT /api/egresos/:id` envuelve update-egreso + update-movimiento en `db.transaction()`
+- [x] Movimiento se identifica por `referenciaId = :id AND tipo = 'egreso'`
+- [x] Si `monto` cambia, se actualiza en el movimiento
+- [x] Si `categoria`/`descripcion` cambia, se actualiza la `nota` del movimiento
+- [x] Si no hay movimiento asociado, PUT actualiza solo el egreso (sin error)
+- [x] `DELETE /api/egresos/:id` envuelve delete-movimiento + delete-egreso en `db.transaction()`
+- [x] DELETE retorna 204 si se elimina correctamente
+- [x] DELETE retorna 404 si el egreso no existe
+- [x] Todas las operaciones dentro del callback usan `tx`, no `db`
+- [x] Rollback completo si falla alguna operación de la transacción
+- [x] `pnpm typecheck` pasa sin errores
 
 ## Estimated Lines
 

@@ -4,14 +4,14 @@
 
 - [x] Task-01: Schema Migration — Agregar columnas `saldoPendiente` y `montoPagado` en multas
 - [x] Task-02: Core Types — Actualizar interfaces con nombres y tipos de reportes
-- [ ] Task-03: API Joins — Agregar JOINs en rutas GET existentes
-- [ ] Task-04: Dashboard Fixes — Correcciones de dashboard y home
+- [x] Task-03: API Joins — Agregar JOINs en rutas GET existentes
+- [x] Task-04: Dashboard Fixes — Correcciones de dashboard y home
 - [ ] Task-05: Activity Types CRUD — CRUD de tipos de actividad
 - [ ] Task-06: Atomic Payments — Pagos atómicos con transacciones
-- [ ] Task-07: Expenses Sync — Sincronización de egresos
+- [x] Task-07: Expenses Sync — Sincronización de egresos
 - [ ] Task-08: Reports API — Endpoints de reportes
 - [ ] Task-09: Reports Frontend — Vistas de reportes
-- [ ] Task-10: UI Form Fixes — Correcciones de formularios UI
+- [x] Task-10: UI Form Fixes — Correcciones de formularios UI
 
 ## Review Workload Forecast
 

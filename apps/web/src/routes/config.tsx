@@ -68,7 +68,6 @@ export default function ConfigPage() {
       return;
     }
     await addTipoActividad({
-      id: crypto.randomUUID(),
       nombre: data.nombre,
       opciones: '[]',
       multas: null,

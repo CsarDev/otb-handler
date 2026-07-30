@@ -116,9 +116,10 @@ export default function MultasPage() {
           <table className="w-full text-left text-sm">
             <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
               <tr>
-                <th className="px-4 py-3">Socio ID</th>
+                <th className="px-4 py-3">Socio</th>
                 <th className="px-4 py-3">Concepto</th>
                 <th className="px-4 py-3">Monto</th>
+                <th className="px-4 py-3">Saldo Pendiente</th>
                 <th className="px-4 py-3">Fecha Gen.</th>
                 <th className="px-4 py-3">Estado</th>
                 <th className="px-4 py-3">Acciones</th>
@@ -127,9 +128,10 @@ export default function MultasPage() {
             <tbody className="divide-y">
               {multas.map((m) => (
                 <tr key={m.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">{m.socioId}</td>
+                  <td className="px-4 py-3">{m.socioNombre ? `${m.socioNombre} ${m.socioApellido ?? ''}` : m.socioId}</td>
                   <td className="px-4 py-3">{m.concepto}</td>
                   <td className="px-4 py-3">Bs {m.monto.toFixed(2)}</td>
+                  <td className="px-4 py-3">Bs {m.saldoPendiente.toFixed(2)}</td>
                   <td className="px-4 py-3">{m.fechaGen}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -144,7 +146,7 @@ export default function MultasPage() {
                     {m.estado === 'pendiente' && (
                       <>
                         <button
-                          onClick={() => { setPayingId(m.id); payForm.setValue('monto', m.monto); }}
+                          onClick={() => { setPayingId(m.id); payForm.setValue('monto', m.saldoPendiente); }}
                           className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50"
                         >
                           Pagar
@@ -210,6 +212,11 @@ export default function MultasPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
             <h3 className="mb-4 text-lg font-bold text-gray-900">Registrar Pago de Multa</h3>
+            {payingId && multas.find((m) => m.id === payingId) && (
+              <p className="mb-3 text-sm text-gray-600">
+                Saldo pendiente: Bs {multas.find((m) => m.id === payingId)!.saldoPendiente.toFixed(2)}
+              </p>
+            )}
             <form onSubmit={payForm.handleSubmit(handlePay)} className="space-y-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">Monto (Bs)</label>

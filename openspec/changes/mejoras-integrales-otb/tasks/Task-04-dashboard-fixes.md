@@ -22,14 +22,14 @@ Corregir tres bugs en `GET /api/dashboard`:
 
 ## Acceptance Criteria
 
-- [ ] `recaudado` filtra por `movimientos.tipo = 'ingreso' AND fecha BETWEEN [inicioMes, finMes]`
-- [ ] `egresosMes` filtra por `egresos.fecha BETWEEN [inicioMes, finMes]` (ya existe, verificar que coincida con recaudado)
-- [ ] `neto = recaudado - egresosMes` (misma ventana para ambas métricas)
-- [ ] `multasPendientes` usa `COALESCE(SUM(multas.saldoPendiente), 0)` donde `estado = 'pendiente'`
-- [ ] `cumpleañosMes` eliminado de la respuesta JSON
-- [ ] `cumpleañosMes` eliminado del tipo `DashboardData` en el store
-- [ ] KPI `Neto` muestra correctamente valores negativos (ya soportado por `positive`/`negative` props)
-- [ ] `pnpm typecheck` pasa sin errores
+- [x] `recaudado` filtra por `movimientos.tipo = 'ingreso' AND fecha BETWEEN [inicioMes, finMes]`
+- [x] `egresosMes` filtra por `egresos.fecha BETWEEN [inicioMes, finMes]` (ya existe, verificar que coincida con recaudado)
+- [x] `neto = recaudado - egresosMes` (misma ventana para ambas métricas)
+- [x] `multasPendientes` usa `COALESCE(SUM(multas.saldoPendiente), 0)` donde `estado = 'pendiente'`
+- [x] `cumpleañosMes` eliminado de la respuesta JSON
+- [x] `cumpleañosMes` eliminado del tipo `DashboardData` en el store
+- [x] KPI `Neto` muestra correctamente valores negativos (ya soportado por `positive`/`negative` props)
+- [x] `pnpm typecheck` pasa sin errores
 
 ## Estimated Lines
 

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, getTableColumns } from 'drizzle-orm';
 
 const multas = new Hono();
 
@@ -11,10 +11,17 @@ multas.get('/', (c) => {
   if (socioId) filters.push(eq(schema.multas.socioId, socioId));
   if (estado) filters.push(eq(schema.multas.estado, estado as 'pendiente' | 'pagado' | 'anulado'));
 
+  const query = db
+    .select({
+      ...getTableColumns(schema.multas),
+      socioNombre: schema.socios.nombre,
+      socioApellido: schema.socios.apellidoPaterno,
+    })
+    .from(schema.multas)
+    .leftJoin(schema.socios, eq(schema.multas.socioId, schema.socios.id));
+
   return c.json(
-    filters.length
-      ? db.select().from(schema.multas).where(and(...filters)).all()
-      : db.select().from(schema.multas).all(),
+    filters.length ? query.where(and(...filters)).all() : query.all(),
   );
 });
 

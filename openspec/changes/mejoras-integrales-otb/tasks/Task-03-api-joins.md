@@ -21,15 +21,15 @@ En el frontend, actualizar las tablas para mostrar `socioNombre socioApellido` y
 
 ## Acceptance Criteria
 
-- [ ] `GET /api/multas` devuelve `socioNombre` + `socioApellido` (LEFT JOIN), socioId se conserva
-- [ ] `GET /api/aportes` devuelve `socioNombre` + `socioApellido` (LEFT JOIN), socioId se conserva
-- [ ] `GET /api/actividades` devuelve `tipoNombre` (LEFT JOIN), tipoId se conserva
-- [ ] Si no hay match en JOIN, los campos nombre son `null`
-- [ ] Tabla de multas muestra "Socio {socioNombre} {socioApellido}" en vez de UUID
-- [ ] Tabla de aportes muestra "Socio {socioNombre} {socioApellido}" en vez de UUID
-- [ ] Tabla de actividades muestra "{tipoNombre}" en vez del UUID de tipoId
-- [ ] Encabezados de columna cambiados de "Socio ID" a "Socio" y "Tipo ID" a "Tipo"
-- [ ] `pnpm typecheck` pasa sin errores
+- [x] `GET /api/multas` devuelve `socioNombre` + `socioApellido` (LEFT JOIN), socioId se conserva
+- [x] `GET /api/aportes` devuelve `socioNombre` + `socioApellido` (LEFT JOIN), socioId se conserva
+- [x] `GET /api/actividades` devuelve `tipoNombre` (LEFT JOIN), tipoId se conserva
+- [x] Si no hay match en JOIN, los campos nombre son `null`
+- [x] Tabla de multas muestra "Socio {socioNombre} {socioApellido}" en vez de UUID
+- [x] Tabla de aportes muestra "Socio {socioNombre} {socioApellido}" en vez de UUID
+- [x] Tabla de actividades muestra "{tipoNombre}" en vez del UUID de tipoId
+- [x] Encabezados de columna cambiados de "Socio ID" a "Socio" y "Tipo ID" a "Tipo"
+- [x] `pnpm typecheck` pasa sin errores
 
 ## Estimated Lines
 
