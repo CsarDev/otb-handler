@@ -48,8 +48,11 @@ export type Aporte = {
   socioApellido: string | null;
   mes: number | null;
   gestion: number | null;
-  tipo: 'mensual' | 'extraordinario';
+  tipo: string;
   montoBase: number;
+  montoPagado: number;
+  saldoPendiente: number;
+  razonAnulacion: string | null;
   numeroRecibo: string | null;
   fechaPago: string | null;
   estado: 'pendiente' | 'pagado' | 'anulado';
@@ -65,6 +68,7 @@ export type Multa = {
   monto: number;
   montoPagado: number;
   saldoPendiente: number;
+  razonAnulacion: string | null;
   fechaGen: string;
   fechaPago: string | null;
   estado: 'pendiente' | 'pagado' | 'anulado';
@@ -79,6 +83,8 @@ export type Movimiento = {
   numeroRecibo: string | null;
   nota: string | null;
   fecha: string;
+  anulado: number;
+  razonAnulacion: string | null;
 };
 
 export type Egreso = {
@@ -117,6 +123,27 @@ export type ResumenSocioReport = {
 
 export type PagoParcialRequest = {
   monto: number;
+};
+
+export type BulkMultaRequest = {
+  socioIds: string[];
+  concepto: string;
+  monto: number;
+  actividadId?: string;
+  fecha?: string;
+};
+
+export type BulkAporteRequest = {
+  socioIds: string[];
+  tipo: 'mensual' | 'unico' | 'anual';
+  montoBase: number;
+  gestion: number;
+  mes?: number;
+  meses?: number;
+};
+
+export type AnularRequest = {
+  razon: string;
 };
 
 export type OTBConfig = {

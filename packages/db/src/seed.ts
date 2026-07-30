@@ -132,13 +132,16 @@ function genAportes() {
         if (s.estado === 'inactivo' && g < gestionActual && m < 6) continue;
         const pago = Math.random() > 0.35;
         const fechaPago = pago ? fecha(new Date(g, m - 1, Math.floor(Math.random() * 20) + 5)) : null;
+        const montoBase = s.aporteBase;
         data.push({
           id: id(),
           socioId: SOCIO_IDS[sociosData.indexOf(s)],
           mes: m,
           gestion: g,
           tipo: 'mensual',
-          montoBase: s.aporteBase,
+          montoBase,
+          montoPagado: pago ? montoBase : 0,
+          saldoPendiente: pago ? 0 : montoBase,
           numeroRecibo: pago ? `REC-${g}-${String(m).padStart(2, '0')}-${String(sociosData.indexOf(s) + 1).padStart(3, '0')}` : null,
           fechaPago,
           estado: pago ? 'pagado' : 'pendiente',

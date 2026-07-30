@@ -12,5 +12,6 @@ export const multas = sqliteTable('multas', {
   saldoPendiente: real('saldo_pendiente').notNull().default(0),
   fechaGen: text('fecha_gen').notNull(),
   fechaPago: text('fecha_pago'),
+  razonAnulacion: text('razon_anulacion'),
   estado: text('estado', { enum: ['pendiente', 'pagado', 'anulado'] }).notNull().default('pendiente'),
 });
