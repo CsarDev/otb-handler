@@ -18,13 +18,13 @@ Ninguna. Esta tarea es la fundación del cambio.
 
 ## Acceptance Criteria
 
-- [ ] Schema `multas` tiene columna `saldo_pendiente: real('saldo_pendiente').notNull().default(0)`
-- [ ] Schema `multas` tiene columna `monto_pagado: real('monto_pagado').notNull().default(0)`
-- [ ] Migración SQL creada con `ALTER TABLE multas ADD COLUMN saldo_pendiente REAL NOT NULL DEFAULT 0` y `ALTER TABLE multas ADD COLUMN monto_pagado REAL NOT NULL DEFAULT 0`
-- [ ] Backfill ejecutado: `UPDATE multas SET saldo_pendiente = monto WHERE estado = 'pendiente'`
-- [ ] Backfill ejecutado: `UPDATE multas SET saldo_pendiente = 0 WHERE estado != 'pendiente'`
-- [ ] `pnpm typecheck` pasa sin errores
-- [ ] Seed data incluye `saldoPendiente` y `montoPagado` en los inserts de multas
+- [x] Schema `multas` tiene columna `saldo_pendiente: real('saldo_pendiente').notNull().default(0)`
+- [x] Schema `multas` tiene columna `monto_pagado: real('monto_pagado').notNull().default(0)`
+- [x] Migración SQL creada con `ALTER TABLE multas ADD COLUMN saldo_pendiente REAL NOT NULL DEFAULT 0` y `ALTER TABLE multas ADD COLUMN monto_pagado REAL NOT NULL DEFAULT 0`
+- [x] Backfill ejecutado: `UPDATE multas SET saldo_pendiente = monto WHERE estado = 'pendiente'`
+- [x] Backfill ejecutado: `UPDATE multas SET saldo_pendiente = 0 WHERE estado != 'pendiente'`
+- [x] `pnpm typecheck` pasa sin errores (pre-existing seed.ts error unrelated)
+- [x] Seed data incluye `saldoPendiente` y `montoPagado` en los inserts de multas
 
 ## Estimated Lines
 

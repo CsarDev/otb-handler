@@ -26,6 +26,7 @@ export type TipoActividad = {
 export type Actividad = {
   id: string;
   tipoId: string;
+  tipoNombre: string | null;
   fecha: string;
   hora: string | null;
   descripcion: string | null;
@@ -43,6 +44,8 @@ export type Asistencia = {
 export type Aporte = {
   id: string;
   socioId: string;
+  socioNombre: string | null;
+  socioApellido: string | null;
   mes: number | null;
   gestion: number | null;
   tipo: 'mensual' | 'extraordinario';
@@ -55,9 +58,13 @@ export type Aporte = {
 export type Multa = {
   id: string;
   socioId: string;
+  socioNombre: string | null;
+  socioApellido: string | null;
   actividadId: string | null;
   concepto: string;
   monto: number;
+  montoPagado: number;
+  saldoPendiente: number;
   fechaGen: string;
   fechaPago: string | null;
   estado: 'pendiente' | 'pagado' | 'anulado';
@@ -82,6 +89,29 @@ export type Egreso = {
   descripcion: string | null;
   fecha: string;
   numRecibo: string | null;
+};
+
+export type BalanceReport = {
+  totalIngresos: number;
+  totalEgresos: number;
+  neto: number;
+  desglose: Array<{ categoria: string; monto: number }>;
+};
+
+export type LibroDiarioEntry = Movimiento & {
+  socioNombre: string | null;
+  socioApellido: string | null;
+};
+
+export type ResumenSocioReport = {
+  totalAportado: number;
+  multasPagadas: number;
+  saldoPendiente: number;
+  socio: { id: string; nombre: string; apellidoPaterno: string };
+};
+
+export type PagoParcialRequest = {
+  monto: number;
 };
 
 export type OTBConfig = {

@@ -8,6 +8,8 @@ export const multas = sqliteTable('multas', {
   actividadId: text('actividad_id').references(() => actividades.id),
   concepto: text('concepto').notNull(),
   monto: real('monto').notNull(),
+  montoPagado: real('monto_pagado').notNull().default(0),
+  saldoPendiente: real('saldo_pendiente').notNull().default(0),
   fechaGen: text('fecha_gen').notNull(),
   fechaPago: text('fecha_pago'),
   estado: text('estado', { enum: ['pendiente', 'pagado', 'anulado'] }).notNull().default('pendiente'),

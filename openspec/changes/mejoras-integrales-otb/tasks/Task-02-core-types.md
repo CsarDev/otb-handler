@@ -14,13 +14,13 @@ Ninguna (tipos puramente sintácticos, no dependen de schema).
 
 ## Acceptance Criteria
 
-- [ ] `Multa` incluye `socioNombre: string | null`, `socioApellido: string | null`, `saldoPendiente: number`, `montoPagado: number`
-- [ ] `Aporte` incluye `socioNombre: string | null`, `socioApellido: string | null`
-- [ ] `Actividad` incluye `tipoNombre: string | null`
-- [ ] Nuevo tipo `BalanceReport` con `totalIngresos`, `totalEgresos`, `neto`, `desglose: Array<{ categoria: string; monto: number }>`
-- [ ] Nuevo tipo `LibroDiarioEntry` extiende `Movimiento` con `socioNombre: string | null`, `socioApellido: string | null`
-- [ ] Nuevo tipo `ResumenSocioReport` con `totalAportado`, `multasPagadas`, `saldoPendiente`, `socio: { id, nombre, apellidoPaterno }`
-- [ ] `pnpm typecheck` pasa sin errores
+- [x] `Multa` incluye `socioNombre: string | null`, `socioApellido: string | null`, `saldoPendiente: number`, `montoPagado: number`
+- [x] `Aporte` incluye `socioNombre: string | null`, `socioApellido: string | null`
+- [x] `Actividad` incluye `tipoNombre: string | null`
+- [x] Nuevo tipo `BalanceReport` con `totalIngresos`, `totalEgresos`, `neto`, `desglose: Array<{ categoria: string; monto: number }>`
+- [x] Nuevo tipo `LibroDiarioEntry` extiende `Movimiento` con `socioNombre: string | null`, `socioApellido: string | null`
+- [x] Nuevo tipo `ResumenSocioReport` con `totalAportado`, `multasPagadas`, `saldoPendiente`, `socio: { id, nombre, apellidoPaterno }`
+- [x] `pnpm typecheck` pasa sin errores
 
 ## Estimated Lines
 
