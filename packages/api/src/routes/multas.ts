@@ -1,15 +1,19 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and, getTableColumns } from 'drizzle-orm';
+import { eq, and, getTableColumns, lte, gte, sql } from 'drizzle-orm';
 
 const multas = new Hono();
 
 multas.get('/', (c) => {
-  const { socioId, estado } = c.req.query();
+  const { socioId, estado, actividadId, fechaDesde, fechaHasta, gestion } = c.req.query();
   const filters: any[] = [];
 
   if (socioId) filters.push(eq(schema.multas.socioId, socioId));
   if (estado) filters.push(eq(schema.multas.estado, estado as 'pendiente' | 'pagado' | 'anulado'));
+  if (actividadId) filters.push(eq(schema.multas.actividadId, actividadId));
+  if (fechaDesde) filters.push(gte(schema.multas.fechaGen, fechaDesde));
+  if (fechaHasta) filters.push(lte(schema.multas.fechaGen, fechaHasta));
+  if (gestion) filters.push(eq(sql`strftime('%Y', ${schema.multas.fechaGen})`, gestion));
 
   const query = db
     .select({
@@ -23,6 +27,39 @@ multas.get('/', (c) => {
   return c.json(
     filters.length ? query.where(and(...filters)).all() : query.all(),
   );
+});
+
+multas.post('/bulk', async (c) => {
+  const body = await c.req.json();
+
+  if (!body.socioIds?.length || !body.concepto || !body.monto) {
+    return c.json({ error: 'socioIds (array), concepto, and monto are required' }, 400);
+  }
+
+  const monto = Number(body.monto);
+  const fechaGen = body.fecha ?? new Date().toISOString().split('T')[0];
+  const socioIds: string[] = body.socioIds;
+
+  const created = db.transaction((tx) => {
+    return socioIds.map((socioId) => {
+      const id = crypto.randomUUID();
+      tx.insert(schema.multas)
+        .values({
+          id,
+          socioId,
+          actividadId: body.actividadId ?? null,
+          concepto: body.concepto,
+          monto,
+          saldoPendiente: monto,
+          montoPagado: 0,
+          fechaGen,
+        })
+        .run();
+      return { id, socioId, concepto: body.concepto, monto };
+    });
+  });
+
+  return c.json({ count: created.length, items: created }, 201);
 });
 
 multas.post('/', async (c) => {
@@ -49,6 +86,42 @@ multas.post('/', async (c) => {
     .get();
 
   return c.json(result, 201);
+});
+
+multas.post('/:id/anular', async (c) => {
+  const { id } = c.req.param();
+  const body = await c.req.json();
+
+  if (!body.razon) return c.json({ error: 'razon is required' }, 400);
+
+  const multa = db
+    .select()
+    .from(schema.multas)
+    .where(eq(schema.multas.id, id))
+    .get();
+
+  if (!multa) return c.json({ error: 'Multa not found' }, 404);
+  if (multa.estado === 'anulado') return c.json({ error: 'Multa already voided' }, 400);
+
+  const updated = db.transaction((tx) => {
+    tx.update(schema.movimientos)
+      .set({ anulado: 1, razonAnulacion: `Anulación de multa: ${body.razon}` })
+      .where(eq(schema.movimientos.referenciaId, id))
+      .run();
+
+    return tx
+      .update(schema.multas)
+      .set({
+        estado: 'anulado',
+        razonAnulacion: body.razon,
+        saldoPendiente: 0,
+      })
+      .where(eq(schema.multas.id, id))
+      .returning()
+      .get();
+  });
+
+  return c.json(updated);
 });
 
 multas.get('/:id/pagos', (c) => {
