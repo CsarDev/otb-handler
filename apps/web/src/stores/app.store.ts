@@ -36,8 +36,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-type AporteFilters = { socioId?: string; mes?: string; gestion?: string; estado?: string };
-type MultaFilters = { socioId?: string; estado?: string };
+type AporteFilters = { socioId?: string; mes?: string; gestion?: string; estado?: string; tipo?: string; fechaDesde?: string; fechaHasta?: string };
+type MultaFilters = { socioId?: string; estado?: string; actividadId?: string; fechaDesde?: string; fechaHasta?: string; gestion?: string };
 type EgresoFilters = { categoria?: string; fechaDesde?: string; fechaHasta?: string };
 
 type DashboardData = {
@@ -79,7 +79,8 @@ type AppState = {
   fetchMultas: (filters?: MultaFilters) => Promise<void>;
   createMulta: (data: Partial<Multa>) => Promise<Multa>;
   pagarMulta: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Multa>;
-  anularMulta: (id: string) => Promise<void>;
+  anularMulta: (id: string, razon: string) => Promise<Multa>;
+  anularAporte: (id: string, razon: string) => Promise<Aporte>;
 
   egresos: Egreso[];
   egresosLoading: boolean;
@@ -178,6 +179,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (filters?.mes) params.set('mes', filters.mes);
       if (filters?.gestion) params.set('gestion', filters.gestion);
       if (filters?.estado) params.set('estado', filters.estado);
+      if (filters?.tipo) params.set('tipo', filters.tipo);
+      if (filters?.fechaDesde) params.set('fechaDesde', filters.fechaDesde);
+      if (filters?.fechaHasta) params.set('fechaHasta', filters.fechaHasta);
       const qs = params.toString() ? `?${params}` : '';
       const data = await request<Aporte[]>(`/aportes${qs}`);
       set({ aportes: data, aportesLoading: false });
@@ -205,6 +209,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const params = new URLSearchParams();
       if (filters?.socioId) params.set('socioId', filters.socioId);
       if (filters?.estado) params.set('estado', filters.estado);
+      if (filters?.actividadId) params.set('actividadId', filters.actividadId);
+      if (filters?.fechaDesde) params.set('fechaDesde', filters.fechaDesde);
+      if (filters?.fechaHasta) params.set('fechaHasta', filters.fechaHasta);
+      if (filters?.gestion) params.set('gestion', filters.gestion);
       const qs = params.toString() ? `?${params}` : '';
       const data = await request<Multa[]>(`/multas${qs}`);
       set({ multas: data, multasLoading: false });
@@ -222,9 +230,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ multas: get().multas.map((m) => (m.id === id ? multa : m)) });
     return multa;
   },
-  anularMulta: async (id) => {
-    await request(`/multas/${id}`, { method: 'DELETE' });
-    set({ multas: get().multas.filter((m) => m.id !== id) });
+  anularMulta: async (id: string, razon: string) => {
+    const multa = await request<Multa>(`/multas/${id}/anular`, { method: 'POST', body: JSON.stringify({ razon }) });
+    set({ multas: get().multas.map((m) => (m.id === id ? multa : m)) });
+    return multa;
+  },
+  anularAporte: async (id: string, razon: string) => {
+    const aporte = await request<Aporte>(`/aportes/${id}/anular`, { method: 'POST', body: JSON.stringify({ razon }) });
+    set({ aportes: get().aportes.map((a) => (a.id === id ? aporte : a)) });
+    return aporte;
   },
 
   egresos: [],

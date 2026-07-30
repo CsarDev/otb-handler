@@ -22,11 +22,13 @@ type CreateAporteForm = z.infer<typeof createAporteSchema>;
 type PagarForm = z.infer<typeof pagarSchema>;
 
 export default function AportesPage() {
-  const { aportes, aportesLoading, aportesError, fetchAportes, createAporte, pagarAporte } = useAppStore();
+  const { aportes, aportesLoading, aportesError, fetchAportes, createAporte, pagarAporte, anularAporte } = useAppStore();
   const { socios, fetchSocios } = useAppStore();
-  const [filters, setFilters] = useState({ socioId: '', mes: '', gestion: '', estado: '' });
+  const [filters, setFilters] = useState({ socioId: '', mes: '', gestion: '', estado: '', tipo: '', fechaDesde: '', fechaHasta: '' });
   const [createOpen, setCreateOpen] = useState(false);
   const [payingId, setPayingId] = useState<string | null>(null);
+  const [voidingId, setVoidingId] = useState<string | null>(null);
+  const [voidReason, setVoidReason] = useState('');
 
   const createForm = useForm<CreateAporteForm>({
     resolver: zodResolver(createAporteSchema) as any,
@@ -43,11 +45,15 @@ export default function AportesPage() {
   }, [fetchSocios]);
 
   useEffect(() => {
-    fetchAportes(filters.socioId || filters.mes || filters.gestion || filters.estado ? {
+    const hasFilters = filters.socioId || filters.mes || filters.gestion || filters.estado || filters.tipo || filters.fechaDesde || filters.fechaHasta;
+    fetchAportes(hasFilters ? {
       socioId: filters.socioId || undefined,
       mes: filters.mes || undefined,
       gestion: filters.gestion || undefined,
       estado: filters.estado || undefined,
+      tipo: filters.tipo || undefined,
+      fechaDesde: filters.fechaDesde || undefined,
+      fechaHasta: filters.fechaHasta || undefined,
     } : undefined);
   }, [filters, fetchAportes]);
 
@@ -62,6 +68,13 @@ export default function AportesPage() {
     await pagarAporte(payingId, { ...data, numeroRecibo: data.numeroRecibo ?? undefined });
     setPayingId(null);
     payForm.reset();
+  }
+
+  async function handleAnular() {
+    if (voidingId === null || !voidReason.trim()) return;
+    await anularAporte(voidingId, voidReason);
+    setVoidingId(null);
+    setVoidReason('');
   }
 
   return (
@@ -105,6 +118,17 @@ export default function AportesPage() {
           className="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
         />
         <select
+          value={filters.tipo}
+          onChange={(e) => setFilters((f) => ({ ...f, tipo: e.target.value }))}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+        >
+          <option value="">Todos los tipos</option>
+          <option value="mensual">Mensual</option>
+          <option value="extraordinario">Extraordinario</option>
+          <option value="anual">Anual</option>
+          <option value="unico">Único</option>
+        </select>
+        <select
           value={filters.estado}
           onChange={(e) => setFilters((f) => ({ ...f, estado: e.target.value }))}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
@@ -112,7 +136,22 @@ export default function AportesPage() {
           <option value="">Todos los estados</option>
           <option value="pagado">Pagado</option>
           <option value="pendiente">Pendiente</option>
+          <option value="anulado">Anulado</option>
         </select>
+        <input
+          type="date"
+          value={filters.fechaDesde}
+          onChange={(e) => setFilters((f) => ({ ...f, fechaDesde: e.target.value }))}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          placeholder="Pago desde"
+        />
+        <input
+          type="date"
+          value={filters.fechaHasta}
+          onChange={(e) => setFilters((f) => ({ ...f, fechaHasta: e.target.value }))}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          placeholder="Pago hasta"
+        />
       </div>
 
       {aportesLoading && <p className="text-gray-500">Cargando...</p>}
@@ -134,6 +173,8 @@ export default function AportesPage() {
                 <th className="px-4 py-3">Gestión</th>
                 <th className="px-4 py-3">Tipo</th>
                 <th className="px-4 py-3">Monto</th>
+                <th className="px-4 py-3">Pagado</th>
+                <th className="px-4 py-3">Saldo</th>
                 <th className="px-4 py-3">Estado</th>
                 <th className="px-4 py-3">Acciones</th>
               </tr>
@@ -146,22 +187,39 @@ export default function AportesPage() {
                   <td className="px-4 py-3">{a.gestion}</td>
                   <td className="px-4 py-3">{a.tipo}</td>
                   <td className="px-4 py-3">Bs {a.montoBase.toFixed(2)}</td>
+                  <td className="px-4 py-3">Bs {(a.montoPagado ?? 0).toFixed(2)}</td>
+                  <td className="px-4 py-3">Bs {(a.saldoPendiente ?? a.montoBase).toFixed(2)}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                      a.estado === 'pagado' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                      a.estado === 'pagado' ? 'bg-green-100 text-green-700'
+                      : a.estado === 'anulado' ? 'bg-gray-100 text-gray-500'
+                      : 'bg-yellow-100 text-yellow-700'
                     }`}>
                       {a.estado}
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    {a.estado === 'pendiente' && (
-                      <button
-                        onClick={() => { setPayingId(a.id); payForm.setValue('monto', a.montoBase); }}
-                        className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50"
-                      >
-                        Pagar
-                      </button>
-                    )}
+                    <div className="flex gap-2">
+                      {a.estado === 'pendiente' && (
+                        <>
+                          <button
+                            onClick={() => { setPayingId(a.id); payForm.setValue('monto', a.saldoPendiente ?? a.montoBase); }}
+                            className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50"
+                          >
+                            Pagar
+                          </button>
+                          <button
+                            onClick={() => { setVoidingId(a.id); setVoidReason(''); }}
+                            className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                          >
+                            Anular
+                          </button>
+                        </>
+                      )}
+                      {a.estado === 'pagado' && a.fechaPago && (
+                        <span className="text-xs text-gray-400">Pagado: {a.fechaPago}</span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -227,6 +285,11 @@ export default function AportesPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
             <h3 className="mb-4 text-lg font-bold text-gray-900">Registrar Pago</h3>
+            {payingId && aportes.find((a) => a.id === payingId) && (
+              <p className="mb-3 text-sm text-gray-600">
+                Saldo pendiente: Bs {(aportes.find((a) => a.id === payingId)!.saldoPendiente ?? aportes.find((a) => a.id === payingId)!.montoBase).toFixed(2)}
+              </p>
+            )}
             <form onSubmit={payForm.handleSubmit(handlePay)} className="space-y-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">Monto (Bs)</label>
@@ -249,6 +312,35 @@ export default function AportesPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {voidingId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-bold text-gray-900">Anular Aporte</h3>
+            <p className="mb-3 text-sm text-gray-600">Ingrese el motivo de la anulación:</p>
+            <textarea
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              rows={3}
+              placeholder="Motivo de anulación..."
+            />
+            <div className="flex justify-end gap-3 pt-3">
+              <button type="button" onClick={() => setVoidingId(null)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleAnular}
+                disabled={!voidReason.trim()}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                Anular
+              </button>
+            </div>
           </div>
         </div>
       )}

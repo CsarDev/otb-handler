@@ -22,10 +22,12 @@ type PagarForm = z.infer<typeof pagarSchema>;
 
 export default function MultasPage() {
   const { multas, multasLoading, multasError, fetchMultas, createMulta, pagarMulta, anularMulta } = useAppStore();
-  const { socios, fetchSocios } = useAppStore();
-  const [filters, setFilters] = useState({ socioId: '', estado: '' });
+  const { socios, fetchSocios, actividades, fetchActividades } = useAppStore();
+  const [filters, setFilters] = useState({ socioId: '', estado: '', actividadId: '', fechaDesde: '', fechaHasta: '', gestion: '' });
   const [createOpen, setCreateOpen] = useState(false);
   const [payingId, setPayingId] = useState<string | null>(null);
+  const [voidingId, setVoidingId] = useState<string | null>(null);
+  const [voidReason, setVoidReason] = useState('');
 
   const createForm = useForm<CreateMultaForm>({
     resolver: zodResolver(createMultaSchema) as any,
@@ -39,12 +41,18 @@ export default function MultasPage() {
 
   useEffect(() => {
     fetchSocios();
-  }, [fetchSocios]);
+    fetchActividades();
+  }, [fetchSocios, fetchActividades]);
 
   useEffect(() => {
-    fetchMultas(filters.socioId || filters.estado ? {
+    const hasFilters = filters.socioId || filters.estado || filters.actividadId || filters.fechaDesde || filters.fechaHasta || filters.gestion;
+    fetchMultas(hasFilters ? {
       socioId: filters.socioId || undefined,
       estado: filters.estado || undefined,
+      actividadId: filters.actividadId || undefined,
+      fechaDesde: filters.fechaDesde || undefined,
+      fechaHasta: filters.fechaHasta || undefined,
+      gestion: filters.gestion || undefined,
     } : undefined);
   }, [filters, fetchMultas]);
 
@@ -61,10 +69,11 @@ export default function MultasPage() {
     payForm.reset();
   }
 
-  async function handleAnular(id: string) {
-    if (confirm('¿Anular esta multa?')) {
-      await anularMulta(id);
-    }
+  async function handleAnular() {
+    if (voidingId === null || !voidReason.trim()) return;
+    await anularMulta(voidingId, voidReason);
+    setVoidingId(null);
+    setVoidReason('');
   }
 
   return (
@@ -100,6 +109,37 @@ export default function MultasPage() {
           <option value="pendiente">Pendiente</option>
           <option value="anulado">Anulado</option>
         </select>
+        <select
+          value={filters.actividadId}
+          onChange={(e) => setFilters((f) => ({ ...f, actividadId: e.target.value }))}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+        >
+          <option value="">Todas las actividades</option>
+          {actividades.map((a) => (
+            <option key={a.id} value={a.id}>{a.tipoNombre ?? a.id} - {a.fecha}</option>
+          ))}
+        </select>
+        <input
+          type="date"
+          value={filters.fechaDesde}
+          onChange={(e) => setFilters((f) => ({ ...f, fechaDesde: e.target.value }))}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          placeholder="Fecha desde"
+        />
+        <input
+          type="date"
+          value={filters.fechaHasta}
+          onChange={(e) => setFilters((f) => ({ ...f, fechaHasta: e.target.value }))}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          placeholder="Fecha hasta"
+        />
+        <input
+          type="number"
+          placeholder="Gestión"
+          value={filters.gestion}
+          onChange={(e) => setFilters((f) => ({ ...f, gestion: e.target.value }))}
+          className="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+        />
       </div>
 
       {multasLoading && <p className="text-gray-500">Cargando...</p>}
@@ -152,7 +192,7 @@ export default function MultasPage() {
                           Pagar
                         </button>
                         <button
-                          onClick={() => handleAnular(m.id)}
+                          onClick={() => { setVoidingId(m.id); setVoidReason(''); }}
                           className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
                         >
                           Anular
@@ -204,6 +244,35 @@ export default function MultasPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {voidingId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-bold text-gray-900">Anular Multa</h3>
+            <p className="mb-3 text-sm text-gray-600">Ingrese el motivo de la anulación:</p>
+            <textarea
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              rows={3}
+              placeholder="Motivo de anulación..."
+            />
+            <div className="flex justify-end gap-3 pt-3">
+              <button type="button" onClick={() => setVoidingId(null)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleAnular}
+                disabled={!voidReason.trim()}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                Anular
+              </button>
+            </div>
           </div>
         </div>
       )}
