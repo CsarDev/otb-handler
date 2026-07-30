@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
+import type { TipoActividad } from '@otb/core';
 
 const configSchema = z.object({
   nombreOTB: z.string().min(1, 'Requerido'),
@@ -26,15 +27,20 @@ const tipoSchema = z.object({
 
 type TipoForm = z.infer<typeof tipoSchema>;
 
+const opcionesDisponibles = ['asistio', 'falta', 'tardanza', 'justificado'];
+
 export default function ConfigPage() {
   const {
     config, configLoading, configError,
     fetchConfig, updateConfig,
-    tiposActividad, addTipoActividad, removeTipoActividad,
+    tiposActividad, addTipoActividad, updateTipoActividad, removeTipoActividad,
   } = useAppStore();
 
   const [saved, setSaved] = useState(false);
   const [showTipoForm, setShowTipoForm] = useState(false);
+  const [editingTipo, setEditingTipo] = useState<TipoActividad | null>(null);
+  const [editOpciones, setEditOpciones] = useState<string[]>([]);
+  const [editMultas, setEditMultas] = useState<Record<string, number>>({});
 
   const configForm = useForm<ConfigForm>({
     resolver: zodResolver(configSchema) as any,
@@ -69,7 +75,7 @@ export default function ConfigPage() {
     }
     await addTipoActividad({
       nombre: data.nombre,
-      opciones: '[]',
+      opciones: JSON.stringify(opcionesDisponibles),
       multas: null,
       tolerancia: data.tolerancia,
     } as any);
@@ -77,9 +83,38 @@ export default function ConfigPage() {
     tipoForm.reset({ nombre: '', tolerancia: 15 });
   }
 
-  async function handleRemoveTipo(nombre: string) {
+  function handleEditTipo(tipo: TipoActividad) {
+    const parsedOpciones = typeof tipo.opciones === 'string' ? JSON.parse(tipo.opciones) : tipo.opciones ?? opcionesDisponibles;
+    const parsedMultas = typeof tipo.multas === 'string' ? JSON.parse(tipo.multas) : tipo.multas ?? {};
+    setEditingTipo(tipo);
+    setEditOpciones(Array.isArray(parsedOpciones) ? parsedOpciones : opcionesDisponibles);
+    setEditMultas(parsedMultas);
+  }
+
+  async function handleSaveEdit() {
+    if (!editingTipo) return;
+    await updateTipoActividad(editingTipo.id, {
+      opciones: JSON.stringify(editOpciones),
+      multas: JSON.stringify(editMultas),
+    });
+    setEditingTipo(null);
+  }
+
+  function toggleOpcion(opcion: string) {
+    setEditOpciones((prev) =>
+      prev.includes(opcion)
+        ? prev.filter((o) => o !== opcion)
+        : [...prev, opcion],
+    );
+  }
+
+  function setMultaMonto(opcion: string, monto: number) {
+    setEditMultas((prev) => ({ ...prev, [opcion]: monto }));
+  }
+
+  async function handleRemoveTipo(id: string, nombre: string) {
     if (confirm(`¿Eliminar el tipo "${nombre}"?`)) {
-      await removeTipoActividad(nombre);
+      await removeTipoActividad(id);
     }
   }
 
@@ -154,17 +189,28 @@ export default function ConfigPage() {
 
         <div className="space-y-2">
           {tiposActividad.map((t) => (
-            <div key={t.nombre} className="flex items-center justify-between rounded-lg border bg-gray-50 px-4 py-2.5">
-              <div>
+            <div key={t.id} className="flex items-center justify-between rounded-lg border bg-gray-50 px-4 py-2.5">
+              <div className="flex-1">
                 <span className="text-sm font-medium text-gray-900">{t.nombre}</span>
                 <span className="ml-3 text-xs text-gray-500">Tolerancia: {t.tolerancia} min</span>
+                <span className="ml-3 text-xs text-gray-400">
+                  Opciones: {(() => { try { return JSON.parse(typeof t.opciones === 'string' ? t.opciones : '[]').join(', '); } catch { return '-'; } })()}
+                </span>
               </div>
-              <button
-                onClick={() => handleRemoveTipo(t.nombre)}
-                className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
-              >
-                Eliminar
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleEditTipo(t)}
+                  className="rounded px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
+                >
+                  Editar
+                </button>
+                <button
+                  onClick={() => handleRemoveTipo(t.id, t.nombre)}
+                  className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                >
+                  Eliminar
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -189,6 +235,59 @@ export default function ConfigPage() {
           </form>
         )}
       </div>
+
+      {editingTipo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-bold text-gray-900">
+              Editar: {editingTipo.nombre}
+            </h3>
+
+            <div className="mb-4">
+              <label className="mb-2 block text-sm font-medium text-gray-700">Opciones de Asistencia</label>
+              <div className="space-y-2">
+                {opcionesDisponibles.map((opcion) => (
+                  <label key={opcion} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={editOpciones.includes(opcion)}
+                      onChange={() => toggleOpcion(opcion)}
+                      className="rounded border-gray-300"
+                    />
+                    {opcion}
+                    {editOpciones.includes(opcion) && (
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="Multa Bs"
+                        value={editMultas[opcion] ?? ''}
+                        onChange={(e) => setMultaMonto(opcion, Number(e.target.value))}
+                        className="ml-2 w-28 rounded border border-gray-300 px-2 py-1 text-xs"
+                      />
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setEditingTipo(null)}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Guardar Cambios
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

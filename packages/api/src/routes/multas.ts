@@ -45,6 +45,21 @@ multas.post('/', async (c) => {
   return c.json(result, 201);
 });
 
+multas.get('/:id/pagos', (c) => {
+  const { id } = c.req.param();
+  const pagos = db
+    .select()
+    .from(schema.movimientos)
+    .where(
+      and(
+        eq(schema.movimientos.referenciaId, id),
+        eq(schema.movimientos.tipo, 'ingreso'),
+      ),
+    )
+    .all();
+  return c.json(pagos);
+});
+
 multas.post('/:id/pagar', async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
@@ -58,29 +73,40 @@ multas.post('/:id/pagar', async (c) => {
   if (!multa) return c.json({ error: 'Multa not found' }, 404);
   if (multa.estado === 'pagado') return c.json({ error: 'Multa already paid' }, 400);
 
-  const montoPagado = body.monto ?? multa.monto;
+  const montoAbono = body.monto ?? multa.saldoPendiente;
   const fechaPago = body.fechaPago ?? new Date().toISOString().split('T')[0];
   const numeroRecibo = body.numeroRecibo;
 
-  db.insert(schema.movimientos)
-    .values({
-      id: crypto.randomUUID(),
-      tipo: 'ingreso',
-      referenciaId: id,
-      socioId: multa.socioId,
-      monto: montoPagado,
-      numeroRecibo,
-      nota: `Pago de multa: ${multa.concepto}`,
-      fecha: fechaPago,
-    })
-    .run();
+  const updated = db.transaction((tx) => {
+    tx.insert(schema.movimientos)
+      .values({
+        id: crypto.randomUUID(),
+        tipo: 'ingreso',
+        referenciaId: id,
+        socioId: multa.socioId,
+        monto: montoAbono,
+        numeroRecibo,
+        nota: `Pago de multa: ${multa.concepto}`,
+        fecha: fechaPago,
+      })
+      .run();
 
-  const updated = db
-    .update(schema.multas)
-    .set({ estado: 'pagado', fechaPago })
-    .where(eq(schema.multas.id, id))
-    .returning()
-    .get();
+    const nuevoPagado = (multa.montoPagado ?? 0) + montoAbono;
+    const nuevoSaldo = Math.max(0, (multa.saldoPendiente ?? multa.monto) - montoAbono);
+    const nuevoEstado = nuevoSaldo <= 0 ? 'pagado' : 'pendiente';
+
+    return tx
+      .update(schema.multas)
+      .set({
+        montoPagado: nuevoPagado,
+        saldoPendiente: nuevoSaldo,
+        estado: nuevoEstado,
+        ...(nuevoEstado === 'pagado' && { fechaPago }),
+      })
+      .where(eq(schema.multas.id, id))
+      .returning()
+      .get();
+  });
 
   return c.json(updated);
 });

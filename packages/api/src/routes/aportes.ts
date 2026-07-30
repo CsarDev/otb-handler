@@ -71,29 +71,31 @@ aportes.post('/:id/pagar', async (c) => {
   const fechaPago = body.fechaPago ?? new Date().toISOString().split('T')[0];
   const numeroRecibo = body.numeroRecibo;
 
-  db.insert(schema.movimientos)
-    .values({
-      id: crypto.randomUUID(),
-      tipo: 'ingreso',
-      referenciaId: id,
-      socioId: aporte.socioId,
-      monto: montoPagado,
-      numeroRecibo,
-      nota: `Pago de aporte - ${aporte.tipo}`,
-      fecha: fechaPago,
-    })
-    .run();
+  const updated = db.transaction((tx) => {
+    tx.insert(schema.movimientos)
+      .values({
+        id: crypto.randomUUID(),
+        tipo: 'ingreso',
+        referenciaId: id,
+        socioId: aporte.socioId,
+        monto: montoPagado,
+        numeroRecibo,
+        nota: `Pago de aporte - ${aporte.tipo}`,
+        fecha: fechaPago,
+      })
+      .run();
 
-  const updated = db
-    .update(schema.aportes)
-    .set({
-      estado: montoPagado >= aporte.montoBase ? 'pagado' : 'pendiente',
-      fechaPago,
-      numeroRecibo,
-    })
-    .where(eq(schema.aportes.id, id))
-    .returning()
-    .get();
+    return tx
+      .update(schema.aportes)
+      .set({
+        estado: 'pagado',
+        fechaPago,
+        numeroRecibo,
+      })
+      .where(eq(schema.aportes.id, id))
+      .returning()
+      .get();
+  });
 
   return c.json(updated);
 });

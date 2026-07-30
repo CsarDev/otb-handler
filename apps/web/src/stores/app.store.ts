@@ -107,7 +107,8 @@ type AppState = {
   fetchConfig: () => Promise<void>;
   updateConfig: (data: Partial<OTBConfig>) => Promise<void>;
   addTipoActividad: (tipo: TipoActividad) => Promise<void>;
-  removeTipoActividad: (nombre: string) => Promise<void>;
+  updateTipoActividad: (id: string, data: Partial<TipoActividad>) => Promise<void>;
+  removeTipoActividad: (id: string) => Promise<void>;
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -318,8 +319,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const tipos = await request<TipoActividad[]>('/tipos-actividad', { method: 'POST', body: JSON.stringify(tipo) });
     set({ tiposActividad: tipos });
   },
-  removeTipoActividad: async (nombre) => {
-    const tipos = await request<TipoActividad[]>(`/tipos-actividad/${encodeURIComponent(nombre)}`, { method: 'DELETE' });
+  updateTipoActividad: async (id, data) => {
+    const tipos = await request<TipoActividad[]>(`/tipos-actividad/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    set({ tiposActividad: tipos });
+  },
+  removeTipoActividad: async (id) => {
+    const tipos = await request<TipoActividad[]>(`/tipos-actividad/${id}`, { method: 'DELETE' });
     set({ tiposActividad: tipos });
   },
 }));

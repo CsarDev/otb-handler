@@ -28,12 +28,54 @@ tiposActividad.post('/', async (c) => {
   return c.json(db.select().from(schema.tiposActividad).all(), 201);
 });
 
-tiposActividad.delete('/:nombre', (c) => {
-  const { nombre } = c.req.param();
-  const decoded = decodeURIComponent(nombre);
+tiposActividad.put('/:id', async (c) => {
+  const { id } = c.req.param();
+  const body = await c.req.json();
+
+  const existing = db
+    .select({ id: schema.tiposActividad.id })
+    .from(schema.tiposActividad)
+    .where(eq(schema.tiposActividad.id, id))
+    .get();
+
+  if (!existing) return c.json({ error: 'Tipo de actividad no encontrado' }, 404);
+
+  db.update(schema.tiposActividad)
+    .set({
+      ...(body.nombre !== undefined && { nombre: body.nombre }),
+      ...(body.opciones !== undefined && { opciones: JSON.stringify(body.opciones) }),
+      ...(body.multas !== undefined && { multas: JSON.stringify(body.multas) }),
+      ...(body.tolerancia !== undefined && { tolerancia: body.tolerancia }),
+    })
+    .where(eq(schema.tiposActividad.id, id))
+    .run();
+
+  return c.json(db.select().from(schema.tiposActividad).all());
+});
+
+tiposActividad.delete('/:id', (c) => {
+  const { id } = c.req.param();
+
+  const existing = db
+    .select({ id: schema.tiposActividad.id })
+    .from(schema.tiposActividad)
+    .where(eq(schema.tiposActividad.id, id))
+    .get();
+
+  if (!existing) return c.json({ error: 'Tipo de actividad no encontrado' }, 404);
+
+  const usedInActividades = db
+    .select({ id: schema.actividades.id })
+    .from(schema.actividades)
+    .where(eq(schema.actividades.tipoId, id))
+    .get();
+
+  if (usedInActividades) {
+    return c.json({ error: 'No se puede eliminar: hay actividades usando este tipo' }, 409);
+  }
 
   db.delete(schema.tiposActividad)
-    .where(eq(schema.tiposActividad.nombre, decoded))
+    .where(eq(schema.tiposActividad.id, id))
     .run();
 
   return c.json(db.select().from(schema.tiposActividad).all());
