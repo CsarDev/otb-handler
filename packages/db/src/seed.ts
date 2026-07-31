@@ -334,7 +334,7 @@ async function main() {
           fechaReg: actividadesData[ai].fecha,
         };
       })
-      .filter(Boolean);
+      .filter((x): x is NonNullable<typeof x> => x !== null);
     db.insert(asistencia).values(asistencias).run();
   }
   console.log(`  Asistencia registrada para ${actividadesData.length} actividades`);
