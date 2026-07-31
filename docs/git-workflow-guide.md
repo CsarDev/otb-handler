@@ -148,3 +148,119 @@ git branch -r --merged dev | grep feat
 # Abrir el PR de la rama actual
 gh pr create --base dev --fill
 ```
+
+---
+
+## 7. PRs huérfanos: qué son y qué hacer
+
+**PR huérfano** = PR abierto cuyo contenido YA está integrado en su rama base.
+GitHub no lo cierra solo porque la integración no pasó por un merge de ese PR exacto.
+
+### Cómo detectarlo (en 10 segundos)
+
+```bash
+# Lista todos los PRs abiertos con su rama
+gh pr list --state open
+
+# ¿La rama del PR ya está en dev? Si el comando no falla → huérfano
+git merge-base --is-ancestor feat/xyz dev && echo "HUÉRFANO: ya está en dev" || echo "ok, falta integrar"
+```
+
+### Qué hacer
+
+```
+PR abierto → ¿su rama es ancestro de dev?
+├─ SÍ → HUÉRFANO → cerrar con comentario, borrar rama:
+│       gh pr close N --comment "integrado en dev"
+│       git push origin --delete feat/xyz && git branch -D feat/xyz
+└─ NO → PR legítimo → seguí el flujo normal (sección 3)
+```
+
+> Un PR huérfano NO se deja abierto. Se cierra — el historial queda en el tab `Closed`.
+> Solo se queda abierto si realmente falta integrar.
+
+---
+
+## 8. Cómo evitar PRs huérfanos + mejoras + automatización
+
+### Reglas que previenen el problema (costo cero)
+
+| Regla | Efecto |
+|-------|--------|
+| Cada feature = 1 rama + 1 PR → `dev` | Elimina las cadenas que generan huérfanos |
+| Integrar SIEMPRE con `gh pr merge --squash --delete-branch` | GitHub cierra y borra solo |
+| NUNCA integrar por fuera del PR (ni merge manual ni push directo a dev) | Evita que el contenido llegue sin que GitHub lo sepa |
+| Si usás cadenas: mergear los PRs en orden #1→#2→#3... | GitHub cierra cada PR al mergearse a su base |
+
+### Mejoras de proceso (recomendadas)
+
+1. **Proteger `dev` y `main`** en GitHub → Settings → Branches → *Add rule*:
+   - Requerir PR + 1 aprobación antes de mergear
+   - Requerir que CI pase (`ci` workflow)
+   - Prohibir push directo (solo merge por PR)
+   - Activar *Auto-delete head branches* (borra la rama al mergear)
+
+2. **Checklist obligatorio en el PR template** — sección "¿Esto está integrado?" para
+   detectar huérfanos antes de abrir.
+
+3. **Regla de review:** antes de abrir un PR, correr
+   `git merge-base --is-ancestor HEAD dev` — si ya está en dev, no abrís el PR.
+
+### Automatización real (GitHub Actions)
+
+Podemos agregar un workflow que corre periódicamente y:
+
+1. **Detecta PRs huérfanos** (rama ya en dev) → los cierra solo con comentario.
+2. **Borra ramas `feat/*` remota** que ya estén integradas en `dev`.
+3. **Cierra PRs viejos sin actividad** (stale, ej: 30 días sin cambios) como recordatorio.
+
+Ejemplo de workflow (`.github/workflows/pr-hygiene.yml`):
+
+```yaml
+name: PR Hygiene
+on:
+  schedule:
+    - cron: '0 6 * * *'      # todos los días 06:00 UTC
+  workflow_dispatch:          # o manual desde Actions
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Close orphan PRs (branch already in dev)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for pr in $(gh pr list --state open --json number,headRefName -q '.[] | "\(.number) \(.headRefName)"'); do
+            num=$(echo "$pr" | cut -d' ' -f1); head=$(echo "$pr" | cut -d' ' -f2)
+            if git merge-base --is-ancestor "origin/$head" origin/dev 2>/dev/null; then
+              gh pr close "$num" --comment "🤖 Huérfano: su rama ya está integrada en dev. Se cierra automáticamente."
+              git push origin --delete "$head" || true
+            fi
+          done
+      - name: Delete merged feat branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for head in $(git branch -r --merged origin/dev | grep 'origin/feat/' | sed 's|origin/||'); do
+            git push origin --delete "$head" || true
+          done
+```
+
+> Ojo: esta automatización borra y cierra — hay que configurarla bien ANTES de activarla,
+> y testear en una rama de prueba. En `workflow_dispatch` podés correrla manualmente.
+
+### Plan de implementación propuesto
+
+```
+[ ] 1. Agregar este workflow de hygiene (o el script equivalente local)
+[ ] 2. Proteger dev y main (branch protection rules)
+[ ] 3. Testear el workflow en modo manual (workflow_dispatch)
+[ ] 4. Dejarlo en cron diario
+[ ] 5. (Opcional) Alias local: gh-pull = chequear huérfano + abrir PR
+```
