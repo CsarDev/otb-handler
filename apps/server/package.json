@@ -19,11 +19,30 @@
     "@otb/excel": "workspace:*",
     "@otb/logger": "workspace:*",
     "@otb/pdf": "workspace:*",
+    "@otb/ui": "workspace:*",
     "hono": "^4.6.0"
   },
   "devDependencies": {
     "tsx": "^4.23.1",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
+  },
+  "nx": {
+    "targets": {
+      "dev": {
+        "executor": "nx:run-script",
+        "options": {
+          "script": "dev",
+          "parallel": true
+        }
+      },
+      "build": {
+        "executor": "nx:run-script",
+        "options": {
+          "script": "build",
+          "parallel": true
+        }
+      }
+    }
   }
 }

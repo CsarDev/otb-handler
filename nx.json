@@ -1,6 +1,21 @@
+/*
+ * Nx Monorepo Configuration - OTB Handler
+ *
+ * Complete enterprise-grade monorepo setup leveraging NX for optimal development,
+ * build, and deployment workflows across all packages.
+ *
+ * Key capabilities:
+ * - Parallel development with isolated package targets
+ * - Shared dependencies optimization
+ * - Advanced task distribution and caching
+ * - Cross-package testing and linting
+ * - Script-based task execution with generators
+ */
+
 {
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
   "defaultBase": "main",
+  
   "targetDefaults": {
     "build": {
       "dependsOn": ["^build"],
@@ -16,6 +31,7 @@
       "cache": true
     }
   },
+  
   "plugins": [
     {
       "plugin": "@nx/js/typescript",
@@ -23,6 +39,46 @@
         "buildTargetName": "build",
         "typecheckTargetName": "typecheck"
       }
+    },
+    {
+      "plugin": "@nx/react",
+      "options": {
+        "uiFramework": "react"
+      }
     }
-  ]
+  ],
+  
+  "generators": {
+    "@nx/js": {
+      "library": {
+        "style": "scss",
+        "linter": "eslint",
+        "unitTestRunner": "vitest",
+        "parser": "typescript"
+      }
+    },
+    "@nx/react": {
+      "application": {
+        "style": "css",
+        "linter": "eslint",
+        "testRunner": "vitest",
+        "router": "react-router",
+        "uiFramework": "react"
+      }
+    }
+  },
+  
+  "production": {
+    "outputRoot": "dist"
+  },
+  
+  "tasksRunnerOptions": {
+    "default": {
+      "runner": "nx-cloud",
+      "options": {
+        "cacheableOperations": ["build", "test", "lint", "typecheck"],
+        "remoteCache": true
+      }
+    }
+  }
 }
