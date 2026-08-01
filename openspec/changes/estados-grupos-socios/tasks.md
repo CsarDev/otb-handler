@@ -7,10 +7,10 @@
 - [x] Task-03: CRUD catálogos (estados-socio, acciones-socio, grupos)
 - [x] Task-04: Socios modificado + lib/permisos.ts
 - [x] Task-05: Enforcement por acción en módulos existentes
-- [ ] Task-06: Store Zustand + helper UI
-- [ ] Task-07: UI Config — tarjetas Estados, Acciones y Grupos
-- [ ] Task-08: UI Socios — form, filtros, badge y ficha
-- [ ] Task-09: UI módulos — filtros y ocultar no permitidos
+- [x] Task-06: Store Zustand + helper UI
+- [x] Task-07: UI Config — tarjetas Estados, Acciones y Grupos
+- [x] Task-08: UI Socios — form, filtros, badge y ficha
+- [x] Task-09: UI módulos — filtros y ocultar no permitidos
 
 ## Review Workload Forecast
 

@@ -1,13 +1,27 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../stores/app.store';
+import { socioPermiteUI } from '../lib/permisos';
+import { Badge } from '@otb/ui';
 
 type Tab = 'balance' | 'libro-diario' | 'resumen-socio';
 type BalanceMode = 'gestion-mes' | 'gestion' | 'rango' | 'todas';
 type ResumenTipo = 'todos' | 'aportes' | 'multas';
 
+/** Badge de estado del socio con color del catálogo (hex inline). */
+function SocioEstadoBadge({ socioId, socioById }: { socioId: string; socioById: Map<string, { estadoColor: string | null; estadoNombre: string | null }> }) {
+  const socio = socioById.get(socioId);
+  if (!socio?.estadoNombre) return null;
+  return (
+    <Badge style={{ backgroundColor: socio.estadoColor ?? '#9ca3af', color: '#fff' }}>
+      {socio.estadoNombre}
+    </Badge>
+  );
+}
+
 export default function ReportesPage() {
   const {
     socios, fetchSocios,
+    estadosSocio, accionesSocio, grupos, fetchConfig,
     balanceReport, libroDiario, resumenSocio, reportsLoading,
     fetchBalance, fetchLibroDiario, fetchResumenSocio,
   } = useAppStore();
@@ -22,15 +36,20 @@ export default function ReportesPage() {
   const [ldGestion, setLdGestion] = useState('');
   const [ldMes, setLdMes] = useState('');
   const [ldTipo, setLdTipo] = useState<string>('todos');
+  const [ldEstadoId, setLdEstadoId] = useState('');
+  const [ldGrupoId, setLdGrupoId] = useState('');
   const [rsGestion, setRsGestion] = useState('');
   const [rsMes, setRsMes] = useState('');
   const [rsFechaDesde, setRsFechaDesde] = useState('');
   const [rsFechaHasta, setRsFechaHasta] = useState('');
   const [rsTipo, setRsTipo] = useState<ResumenTipo>('todos');
+  const [rsEstadoId, setRsEstadoId] = useState('');
+  const [rsGrupoId, setRsGrupoId] = useState('');
 
   useEffect(() => {
     fetchSocios();
-  }, [fetchSocios]);
+    fetchConfig();
+  }, [fetchSocios, fetchConfig]);
 
   useEffect(() => {
     if (tab === 'balance') {
@@ -39,11 +58,16 @@ export default function ReportesPage() {
       else if (balanceMode === 'rango') fetchBalance(undefined, undefined, fechaDesde || undefined, fechaHasta || undefined);
       else fetchBalance();
     } else if (tab === 'libro-diario') {
-      fetchLibroDiario(fechaDesde || undefined, fechaHasta || undefined, ldGestion || undefined, ldMes || undefined, ldTipo === 'todos' ? undefined : ldTipo);
+      fetchLibroDiario(fechaDesde || undefined, fechaHasta || undefined, ldGestion || undefined, ldMes || undefined, ldTipo === 'todos' ? undefined : ldTipo, ldEstadoId || undefined, ldGrupoId || undefined);
     } else if (tab === 'resumen-socio' && selectedSocioId) {
-      fetchResumenSocio(selectedSocioId, rsGestion || undefined, rsMes || undefined, rsFechaDesde || undefined, rsFechaHasta || undefined, rsTipo === 'todos' ? undefined : rsTipo);
+      fetchResumenSocio(selectedSocioId, rsGestion || undefined, rsMes || undefined, rsFechaDesde || undefined, rsFechaHasta || undefined, rsTipo === 'todos' ? undefined : rsTipo, rsEstadoId || undefined, rsGrupoId || undefined);
     }
-  }, [tab, balanceMode, gestion, mes, fechaDesde, fechaHasta, selectedSocioId, ldGestion, ldMes, ldTipo, rsGestion, rsMes, rsFechaDesde, rsFechaHasta, rsTipo, fetchBalance, fetchLibroDiario, fetchResumenSocio]);
+  }, [tab, balanceMode, gestion, mes, fechaDesde, fechaHasta, selectedSocioId, ldGestion, ldMes, ldTipo, ldEstadoId, ldGrupoId, rsGestion, rsMes, rsFechaDesde, rsFechaHasta, rsTipo, rsEstadoId, rsGrupoId, fetchBalance, fetchLibroDiario, fetchResumenSocio]);
+
+  const sociosConPermiso = socios.filter((s) =>
+    socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'reportes'),
+  );
+  const socioById = new Map(socios.map((s) => [s.id, s]));
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'balance', label: 'Balance' },
@@ -121,7 +145,7 @@ export default function ReportesPage() {
 
           {balanceReport && (
             <div className="space-y-6">
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="rounded-xl border bg-green-50 p-4">
                   <p className="text-xs font-medium text-green-600">Ingresos</p>
                   <p className="mt-1 text-2xl font-bold text-green-700">
@@ -142,7 +166,7 @@ export default function ReportesPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                 <div className="rounded-xl border bg-white p-4 shadow-sm">
                   <h4 className="mb-3 text-sm font-semibold text-gray-900">Ingresos por Categoría</h4>
                   {balanceReport.ingresosPorCategoria.length === 0 ? (
@@ -215,6 +239,22 @@ export default function ReportesPage() {
               <option value="ingreso">Ingresos</option>
               <option value="egreso">Egresos</option>
             </select>
+            <select
+              value={ldEstadoId}
+              onChange={(e) => setLdEstadoId(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="">Todos los estados de socio</option>
+              {estadosSocio.map((e) => (<option key={e.id} value={e.id}>● {e.nombre}</option>))}
+            </select>
+            <select
+              value={ldGrupoId}
+              onChange={(e) => setLdGrupoId(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="">Todos los grupos</option>
+              {grupos.map((g) => (<option key={g.id} value={g.id}>{g.nombre}</option>))}
+            </select>
             <input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Desde" />
             <input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Hasta" />
           </div>
@@ -226,7 +266,7 @@ export default function ReportesPage() {
           )}
 
           {libroDiario.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+            <div className="hidden overflow-x-auto rounded-xl border bg-white shadow-sm sm:block">
               <table className="w-full text-left text-sm">
                 <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
                   <tr>
@@ -247,7 +287,12 @@ export default function ReportesPage() {
                           m.tipo === 'ingreso' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                         }`}>{m.tipo}</span>
                       </td>
-                      <td className="px-4 py-3">{m.socioNombre ? `${m.socioNombre} ${m.socioApellido ?? ''}` : '-'}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{m.socioNombre ? `${m.socioNombre} ${m.socioApellido ?? ''}` : '-'}</span>
+                          {m.socioId && <SocioEstadoBadge socioId={m.socioId} socioById={socioById} />}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-gray-700">{m.nota ?? '-'}</td>
                       <td className={`px-4 py-3 font-medium ${m.tipo === 'ingreso' ? 'text-green-700' : 'text-red-700'}`}>Bs {m.monto.toFixed(2)}</td>
                       <td className="px-4 py-3 text-gray-500">{m.numeroRecibo ?? '-'}</td>
@@ -255,6 +300,28 @@ export default function ReportesPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {libroDiario.length > 0 && (
+            <div className="space-y-3 sm:hidden">
+              {libroDiario.map((m) => (
+                <div key={m.id} className="rounded-xl border bg-white p-4 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${m.tipo === 'ingreso' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{m.tipo}</span>
+                    <span className="text-xs text-gray-500">{m.fecha}</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-gray-900">{m.socioNombre ? `${m.socioNombre} ${m.socioApellido ?? ''}` : '-'}</span>
+                    {m.socioId && <SocioEstadoBadge socioId={m.socioId} socioById={socioById} />}
+                  </div>
+                  <dl className="mt-2 space-y-1 text-sm">
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Concepto</dt><dd>{m.nota ?? '-'}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Monto</dt><dd className={`font-medium ${m.tipo === 'ingreso' ? 'text-green-700' : 'text-red-700'}`}>Bs {m.monto.toFixed(2)}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Recibo</dt><dd>{m.numeroRecibo ?? '-'}</dd></div>
+                  </dl>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -270,12 +337,28 @@ export default function ReportesPage() {
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">Seleccionar socio...</option>
-              {socios.map((s) => (
+              {sociosConPermiso.map((s) => (
                 <option key={s.id} value={s.id}>{s.nombre} {s.apellidoPaterno}</option>
               ))}
             </select>
             <input type="number" placeholder="Gestión" value={rsGestion} onChange={(e) => setRsGestion(e.target.value)} className="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
             <input type="number" placeholder="Mes" min={1} max={12} value={rsMes} onChange={(e) => setRsMes(e.target.value)} className="w-20 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            <select
+              value={rsEstadoId}
+              onChange={(e) => setRsEstadoId(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="">Todos los estados de socio</option>
+              {estadosSocio.map((e) => (<option key={e.id} value={e.id}>● {e.nombre}</option>))}
+            </select>
+            <select
+              value={rsGrupoId}
+              onChange={(e) => setRsGrupoId(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="">Todos los grupos</option>
+              {grupos.map((g) => (<option key={g.id} value={g.id}>{g.nombre}</option>))}
+            </select>
             <input type="date" value={rsFechaDesde} onChange={(e) => setRsFechaDesde(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Desde" />
             <input type="date" value={rsFechaHasta} onChange={(e) => setRsFechaHasta(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Hasta" />
             <select value={rsTipo} onChange={(e) => setRsTipo(e.target.value as ResumenTipo)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm">
@@ -288,12 +371,15 @@ export default function ReportesPage() {
           {resumenSocio && (
             <div className="space-y-6">
               <div className="rounded-xl border bg-white p-4 shadow-sm">
-                <h4 className="mb-1 text-lg font-semibold text-gray-900">
-                  {resumenSocio.socio.nombre} {resumenSocio.socio.apellido}
-                </h4>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-lg font-semibold text-gray-900">
+                    {resumenSocio.socio.nombre} {resumenSocio.socio.apellido}
+                  </h4>
+                  {resumenSocio.socio.id && <SocioEstadoBadge socioId={resumenSocio.socio.id} socioById={socioById} />}
+                </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="rounded-xl border bg-green-50 p-4">
                   <p className="text-xs font-medium text-green-600">Total Aportado</p>
                   <p className="mt-1 text-2xl font-bold text-green-700">Bs {resumenSocio.totalAportado.toFixed(2)}</p>
@@ -308,7 +394,7 @@ export default function ReportesPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                 {(rsTipo === 'todos' || rsTipo === 'aportes') && (
                   <div className="rounded-xl border bg-white p-4 shadow-sm">
                     <h4 className="mb-3 text-sm font-semibold text-gray-900">Aportes Pendientes ({resumenSocio.aportesPendientes.length})</h4>

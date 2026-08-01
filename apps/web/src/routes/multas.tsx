@@ -3,6 +3,9 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
+import { socioPermiteUI } from '../lib/permisos';
+import { Badge } from '@otb/ui';
+import type { Multa } from '@otb/core';
 
 const createMultaSchema = z.object({
   socioIds: z.array(z.string()).min(1, 'Seleccione al menos un socio'),
@@ -20,11 +23,23 @@ const pagarSchema = z.object({
 type CreateMultaForm = z.infer<typeof createMultaSchema>;
 type PagarForm = z.infer<typeof pagarSchema>;
 
+/** Badge de estado del socio con color del catálogo (hex inline). */
+function SocioEstadoBadge({ multa, socioById }: { multa: Multa; socioById: Map<string, { estadoColor: string | null; estadoNombre: string | null }> }) {
+  const socio = socioById.get(multa.socioId);
+  if (!socio?.estadoNombre) return null;
+  return (
+    <Badge style={{ backgroundColor: socio.estadoColor ?? '#9ca3af', color: '#fff' }}>
+      {socio.estadoNombre}
+    </Badge>
+  );
+}
+
 export default function MultasPage() {
   const { multas, multasLoading, multasError, fetchMultas, pagarMulta, anularMulta } = useAppStore();
   const { socios, fetchSocios, actividades, fetchActividades } = useAppStore();
+  const { estadosSocio, accionesSocio, grupos, fetchConfig } = useAppStore();
   const [tab, setTab] = useState<'crear' | 'listar'>('listar');
-  const [filters, setFilters] = useState({ socioId: '', estado: '', actividadId: '', fechaDesde: '', fechaHasta: '', gestion: '' });
+  const [filters, setFilters] = useState({ socioId: '', estado: '', actividadId: '', fechaDesde: '', fechaHasta: '', gestion: '', estadoId: '', grupoId: '' });
   const [createOpen, setCreateOpen] = useState(false);
   const [payingId, setPayingId] = useState<string | null>(null);
   const [voidingId, setVoidingId] = useState<string | null>(null);
@@ -43,11 +58,12 @@ export default function MultasPage() {
   useEffect(() => {
     fetchSocios();
     fetchActividades();
-  }, [fetchSocios, fetchActividades]);
+    fetchConfig();
+  }, [fetchSocios, fetchActividades, fetchConfig]);
 
   useEffect(() => {
     if (tab !== 'listar') return;
-    const hasFilters = filters.socioId || filters.estado || filters.actividadId || filters.fechaDesde || filters.fechaHasta || filters.gestion;
+    const hasFilters = filters.socioId || filters.estado || filters.actividadId || filters.fechaDesde || filters.fechaHasta || filters.gestion || filters.estadoId || filters.grupoId;
     fetchMultas(hasFilters ? {
       socioId: filters.socioId || undefined,
       estado: filters.estado || undefined,
@@ -55,6 +71,8 @@ export default function MultasPage() {
       fechaDesde: filters.fechaDesde || undefined,
       fechaHasta: filters.fechaHasta || undefined,
       gestion: filters.gestion || undefined,
+      estadoId: filters.estadoId || undefined,
+      grupoId: filters.grupoId || undefined,
     } : undefined);
   }, [tab, filters, fetchMultas]);
 
@@ -106,6 +124,11 @@ export default function MultasPage() {
     }
   }
 
+  const permitidos = socios.filter((s) =>
+    socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'multas'),
+  );
+  const socioById = new Map(socios.map((s) => [s.id, s]));
+
   const tabs = [
     { key: 'listar' as const, label: 'Listar Multas' },
     { key: 'crear' as const, label: 'Crear Multas' },
@@ -137,9 +160,9 @@ export default function MultasPage() {
           <h3 className="mb-4 text-lg font-bold text-gray-900">Crear Multas Batch</h3>
           <form onSubmit={createForm.handleSubmit(handleCreate)} className="space-y-4">
             <div>
-              <label className="mb-2 block text-xs font-medium text-gray-600">Socios</label>
+              <label className="mb-2 block text-xs font-medium text-gray-600">Socios (solo con permiso de "multas")</label>
               <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 p-2">
-                {socios.map((s) => {
+                {permitidos.map((s) => {
                   const checked = createForm.watch('socioIds').includes(s.id);
                   return (
                     <label key={s.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
@@ -148,6 +171,7 @@ export default function MultasPage() {
                     </label>
                   );
                 })}
+                {permitidos.length === 0 && <p className="px-2 py-1 text-sm text-gray-400">Ningún socio tiene permiso de "multas".</p>}
               </div>
               {createForm.formState.errors.socioIds && <p className="text-xs text-red-500">{createForm.formState.errors.socioIds.message}</p>}
             </div>
@@ -156,7 +180,7 @@ export default function MultasPage() {
               <input {...createForm.register('concepto')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
               {createForm.formState.errors.concepto && <p className="text-xs text-red-500">{createForm.formState.errors.concepto.message}</p>}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">Monto (Bs)</label>
                 <input type="number" step="0.01" {...createForm.register('monto')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
@@ -189,8 +213,16 @@ export default function MultasPage() {
               <option value="">Todos los socios</option>
               {socios.map((s) => (<option key={s.id} value={s.id}>{s.nombre} {s.apellidoPaterno}</option>))}
             </select>
+            <select value={filters.estadoId} onChange={(e) => setFilters((f) => ({ ...f, estadoId: e.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+              <option value="">Todos los estados de socio</option>
+              {estadosSocio.map((e) => (<option key={e.id} value={e.id}>● {e.nombre}</option>))}
+            </select>
+            <select value={filters.grupoId} onChange={(e) => setFilters((f) => ({ ...f, grupoId: e.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+              <option value="">Todos los grupos</option>
+              {grupos.map((g) => (<option key={g.id} value={g.id}>{g.nombre}</option>))}
+            </select>
             <select value={filters.estado} onChange={(e) => setFilters((f) => ({ ...f, estado: e.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-              <option value="">Todos los estados</option>
+              <option value="">Todos los estados de pago</option>
               <option value="pagado">Pagado</option>
               <option value="pendiente">Pendiente</option>
               <option value="anulado">Anulado</option>
@@ -212,7 +244,7 @@ export default function MultasPage() {
           )}
 
           {multas.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+            <div className="hidden overflow-x-auto rounded-xl border bg-white shadow-sm sm:block">
               <table className="w-full text-left text-sm">
                 <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
                   <tr><th className="px-4 py-3">Socio</th><th className="px-4 py-3">Concepto</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Saldo</th><th className="px-4 py-3">Fecha Gen.</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Acciones</th></tr>
@@ -220,7 +252,12 @@ export default function MultasPage() {
                 <tbody className="divide-y">
                   {multas.map((m) => (
                     <tr key={m.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3">{m.socioNombre ? `${m.socioNombre} ${m.socioApellido ?? ''}` : m.socioId}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{m.socioNombre ? `${m.socioNombre} ${m.socioApellido ?? ''}` : m.socioId}</span>
+                          <SocioEstadoBadge multa={m} socioById={socioById} />
+                        </div>
+                      </td>
                       <td className="px-4 py-3">{m.concepto}</td>
                       <td className="px-4 py-3">Bs {m.monto.toFixed(2)}</td>
                       <td className="px-4 py-3">Bs {m.saldoPendiente.toFixed(2)}</td>
@@ -232,19 +269,53 @@ export default function MultasPage() {
                           : 'bg-yellow-100 text-yellow-700'
                         }`}>{m.estado}</span>
                       </td>
-                      <td className="flex gap-2 px-4 py-3">
-                        {m.estado === 'pendiente' && (
-                          <>
-                            <button onClick={() => { setPayingId(m.id); payForm.setValue('monto', m.saldoPendiente); }} className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50">Pagar</button>
-                            <button onClick={() => { setVoidingId(m.id); setVoidReason(''); }} className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50">Anular</button>
-                          </>
-                        )}
-                        {m.estado === 'pagado' && m.fechaPago && <span className="text-xs text-gray-400">Pagado: {m.fechaPago}</span>}
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          {m.estado === 'pendiente' && (
+                            <>
+                              <button onClick={() => { setPayingId(m.id); payForm.setValue('monto', m.saldoPendiente); }} className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50">Pagar</button>
+                              <button onClick={() => { setVoidingId(m.id); setVoidReason(''); }} className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50">Anular</button>
+                            </>
+                          )}
+                          {m.estado === 'pagado' && m.fechaPago && <span className="text-xs text-gray-400">Pagado: {m.fechaPago}</span>}
+                        </div>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {multas.length > 0 && (
+            <div className="space-y-3 sm:hidden">
+              {multas.map((m) => (
+                <div key={m.id} className="rounded-xl border bg-white p-4 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium text-gray-900">{m.socioNombre ? `${m.socioNombre} ${m.socioApellido ?? ''}` : m.socioId}</span>
+                    <SocioEstadoBadge multa={m} socioById={socioById} />
+                  </div>
+                  <dl className="mt-2 space-y-1 text-sm">
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Concepto</dt><dd>{m.concepto}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Monto</dt><dd>Bs {m.monto.toFixed(2)}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Saldo</dt><dd>Bs {m.saldoPendiente.toFixed(2)}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Fecha</dt><dd>{m.fechaGen}</dd></div>
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-gray-500">Estado</dt>
+                      <dd><span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${m.estado === 'pagado' ? 'bg-green-100 text-green-700' : (m.estado as string) === 'anulado' ? 'bg-gray-100 text-gray-500' : 'bg-yellow-100 text-yellow-700'}`}>{m.estado}</span></dd>
+                    </div>
+                  </dl>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {m.estado === 'pendiente' && (
+                      <>
+                        <button onClick={() => { setPayingId(m.id); payForm.setValue('monto', m.saldoPendiente); }} className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50">Pagar</button>
+                        <button onClick={() => { setVoidingId(m.id); setVoidReason(''); }} className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50">Anular</button>
+                      </>
+                    )}
+                    {m.estado === 'pagado' && m.fechaPago && <span className="text-xs text-gray-400">Pagado: {m.fechaPago}</span>}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </>
