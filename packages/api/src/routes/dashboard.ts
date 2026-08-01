@@ -37,10 +37,11 @@ dashboard.get('/', (c) => {
     .select({ count: sql<number>`COUNT(DISTINCT ${schema.aportes.socioId})` })
     .from(schema.aportes)
     .innerJoin(schema.socios, eq(schema.aportes.socioId, schema.socios.id))
+    .innerJoin(schema.estadosSocio, eq(schema.socios.estadoId, schema.estadosSocio.id))
     .where(
       and(
         eq(schema.aportes.estado, 'pendiente'),
-        eq(schema.socios.estado, 'activo'),
+        eq(schema.estadosSocio.esActivo, 1),
       ),
     )
     .get();
@@ -58,7 +59,8 @@ dashboard.get('/', (c) => {
   const totalSociosResult = db
     .select({ count: sql<number>`COUNT(*)` })
     .from(schema.socios)
-    .where(eq(schema.socios.estado, 'activo'))
+    .innerJoin(schema.estadosSocio, eq(schema.socios.estadoId, schema.estadosSocio.id))
+    .where(eq(schema.estadosSocio.esActivo, 1))
     .get();
 
   const totalSocios = Number(totalSociosResult?.count ?? 0);

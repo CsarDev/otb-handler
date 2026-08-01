@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and, getTableColumns, lte, gte, sql } from 'drizzle-orm';
+import { eq, and, getTableColumns, lte, gte, sql, or, inArray } from 'drizzle-orm';
+import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
 
 const multas = new Hono();
 
 multas.get('/', (c) => {
-  const { socioId, estado, actividadId, fechaDesde, fechaHasta, gestion } = c.req.query();
+  const { socioId, estado, actividadId, fechaDesde, fechaHasta, gestion, estadoId, grupoId } = c.req.query();
   const filters: any[] = [];
 
   if (socioId) filters.push(eq(schema.multas.socioId, socioId));
@@ -14,6 +15,14 @@ multas.get('/', (c) => {
   if (fechaDesde) filters.push(gte(schema.multas.fechaGen, fechaDesde));
   if (fechaHasta) filters.push(lte(schema.multas.fechaGen, fechaHasta));
   if (gestion) filters.push(eq(sql`strftime('%Y', ${schema.multas.fechaGen})`, gestion));
+  if (estadoId) filters.push(eq(schema.socios.estadoId, estadoId));
+  if (grupoId) {
+    const subquery = db
+      .select({ socioId: schema.socioGrupos.socioId })
+      .from(schema.socioGrupos)
+      .where(eq(schema.socioGrupos.grupoId, grupoId));
+    filters.push(or(eq(schema.socios.grupoPrimarioId, grupoId), inArray(schema.socios.id, subquery)));
+  }
 
   const query = db
     .select({
@@ -40,8 +49,21 @@ multas.post('/bulk', async (c) => {
   const fechaGen = body.fecha ?? new Date().toISOString().split('T')[0];
   const socioIds: string[] = body.socioIds;
 
+  // Enforcement: excluir socios cuyo estado no permite 'multas'
+  const permisos = cargarPermisosPorEstado();
+  const socios = db
+    .select({ id: schema.socios.id, estadoId: schema.socios.estadoId })
+    .from(schema.socios)
+    .where(inArray(schema.socios.id, socioIds))
+    .all();
+  const permitidos = socios.filter((s) => permite(permisos, s.estadoId, 'multas')).map((s) => s.id);
+
+  if (permitidos.length === 0) {
+    return c.json({ error: 'Ningún socio puede participar en esta acción en su estado actual' }, 400);
+  }
+
   const created = db.transaction((tx) => {
-    return socioIds.map((socioId) => {
+    return permitidos.map((socioId) => {
       const id = crypto.randomUUID();
       tx.insert(schema.multas)
         .values({
@@ -68,6 +90,16 @@ multas.post('/', async (c) => {
   if (!body.socioId || !body.concepto || !body.monto) {
     return c.json({ error: 'socioId, concepto, and monto are required' }, 400);
   }
+
+  const permisos = cargarPermisosPorEstado();
+  const socio = db
+    .select({ estadoId: schema.socios.estadoId })
+    .from(schema.socios)
+    .where(eq(schema.socios.id, body.socioId))
+    .get();
+
+  if (!socio) return c.json({ error: 'Socio not found' }, 404);
+  if (!permite(permisos, socio.estadoId, 'multas')) return c.json(ERROR_PERMISO, 409);
 
   const monto = Number(body.monto);
   const result = db
@@ -102,6 +134,16 @@ multas.post('/:id/anular', async (c) => {
 
   if (!multa) return c.json({ error: 'Multa not found' }, 404);
   if (multa.estado === 'anulado') return c.json({ error: 'Multa already voided' }, 400);
+
+  // Enforcement 'anulaciones'
+  const permisos = cargarPermisosPorEstado();
+  const socio = db
+    .select({ estadoId: schema.socios.estadoId })
+    .from(schema.socios)
+    .where(eq(schema.socios.id, multa.socioId))
+    .get();
+  if (!socio) return c.json({ error: 'Socio not found' }, 404);
+  if (!permite(permisos, socio.estadoId, 'anulaciones')) return c.json(ERROR_PERMISO, 409);
 
   const updated = db.transaction((tx) => {
     tx.update(schema.movimientos)
@@ -152,6 +194,16 @@ multas.post('/:id/pagar', async (c) => {
   if (!multa) return c.json({ error: 'Multa not found' }, 404);
   if (multa.estado === 'pagado') return c.json({ error: 'Multa already paid' }, 400);
 
+  // Enforcement 'pagos'
+  const permisos = cargarPermisosPorEstado();
+  const socio = db
+    .select({ estadoId: schema.socios.estadoId })
+    .from(schema.socios)
+    .where(eq(schema.socios.id, multa.socioId))
+    .get();
+  if (!socio) return c.json({ error: 'Socio not found' }, 404);
+  if (!permite(permisos, socio.estadoId, 'pagos')) return c.json(ERROR_PERMISO, 409);
+
   const montoAbono = body.monto !== undefined ? Number(body.monto) : multa.saldoPendiente;
   if (montoAbono <= 0) return c.json({ error: 'El monto debe ser mayor a 0' }, 400);
   if (montoAbono > multa.saldoPendiente) {
@@ -198,6 +250,24 @@ multas.put('/:id', async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
   delete body.id;
+
+  const existing = db
+    .select({ socioId: schema.multas.socioId })
+    .from(schema.multas)
+    .where(eq(schema.multas.id, id))
+    .get();
+
+  if (!existing) return c.json({ error: 'Not found' }, 404);
+
+  // Enforcement 'multas'
+  const permisos = cargarPermisosPorEstado();
+  const socio = db
+    .select({ estadoId: schema.socios.estadoId })
+    .from(schema.socios)
+    .where(eq(schema.socios.id, existing.socioId))
+    .get();
+  if (!socio) return c.json({ error: 'Socio not found' }, 404);
+  if (!permite(permisos, socio.estadoId, 'multas')) return c.json(ERROR_PERMISO, 409);
 
   const result = db
     .update(schema.multas)

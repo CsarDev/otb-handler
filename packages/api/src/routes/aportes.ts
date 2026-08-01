@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and, getTableColumns, lte, gte } from 'drizzle-orm';
+import { eq, and, getTableColumns, lte, gte, or, inArray } from 'drizzle-orm';
+import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
 
 const aportes = new Hono();
 
 aportes.get('/', (c) => {
-  const { socioId, mes, gestion, estado, tipo, fechaDesde, fechaHasta } = c.req.query();
+  const { socioId, mes, gestion, estado, tipo, fechaDesde, fechaHasta, estadoId, grupoId } = c.req.query();
   const filters: any[] = [];
 
   if (socioId) filters.push(eq(schema.aportes.socioId, socioId));
@@ -15,6 +16,14 @@ aportes.get('/', (c) => {
   if (estado) filters.push(eq(schema.aportes.estado, estado as 'pendiente' | 'pagado' | 'anulado'));
   if (fechaDesde) filters.push(gte(schema.aportes.fechaPago, fechaDesde));
   if (fechaHasta) filters.push(lte(schema.aportes.fechaPago, fechaHasta));
+  if (estadoId) filters.push(eq(schema.socios.estadoId, estadoId));
+  if (grupoId) {
+    const subquery = db
+      .select({ socioId: schema.socioGrupos.socioId })
+      .from(schema.socioGrupos)
+      .where(eq(schema.socioGrupos.grupoId, grupoId));
+    filters.push(or(eq(schema.socios.grupoPrimarioId, grupoId), inArray(schema.socios.id, subquery)));
+  }
 
   const query = db
     .select({
@@ -44,10 +53,23 @@ aportes.post('/bulk', async (c) => {
   const mes = body.mes ? Number(body.mes) : undefined;
   const meses = body.meses ? Number(body.meses) : 1;
 
+  // Enforcement: excluir socios cuyo estado no permite 'aportes'
+  const permisos = cargarPermisosPorEstado();
+  const socios = db
+    .select({ id: schema.socios.id, estadoId: schema.socios.estadoId })
+    .from(schema.socios)
+    .where(inArray(schema.socios.id, socioIds))
+    .all();
+  const permitidos = socios.filter((s) => permite(permisos, s.estadoId, 'aportes')).map((s) => s.id);
+
+  if (permitidos.length === 0) {
+    return c.json({ error: 'Ningún socio puede participar en esta acción en su estado actual' }, 400);
+  }
+
   const created = db.transaction((tx) => {
     const items: Array<{ id: string; socioId: string; mes: number | undefined; gestion: number; tipo: string; montoBase: number }> = [];
 
-    for (const socioId of socioIds) {
+    for (const socioId of permitidos) {
       if (tipo === 'anual' && body.meses) {
         for (let m = 1; m <= Number(body.meses); m++) {
           const id = crypto.randomUUID();
@@ -109,6 +131,16 @@ aportes.post('/', async (c) => {
     return c.json({ error: 'socioId and montoBase are required' }, 400);
   }
 
+  const permisos = cargarPermisosPorEstado();
+  const socio = db
+    .select({ estadoId: schema.socios.estadoId })
+    .from(schema.socios)
+    .where(eq(schema.socios.id, body.socioId))
+    .get();
+
+  if (!socio) return c.json({ error: 'Socio not found' }, 404);
+  if (!permite(permisos, socio.estadoId, 'aportes')) return c.json(ERROR_PERMISO, 409);
+
   const result = db
     .insert(schema.aportes)
     .values({ id: crypto.randomUUID(), ...body })
@@ -131,6 +163,16 @@ aportes.post('/:id/pagar', async (c) => {
   if (!aporte) return c.json({ error: 'Aporte not found' }, 404);
   if (aporte.estado === 'pagado') return c.json({ error: 'Aporte already paid' }, 400);
   if (aporte.estado === 'anulado') return c.json({ error: 'Aporte is voided' }, 400);
+
+  // Enforcement 'pagos': cargar el socio del aporte
+  const permisos = cargarPermisosPorEstado();
+  const socio = db
+    .select({ estadoId: schema.socios.estadoId })
+    .from(schema.socios)
+    .where(eq(schema.socios.id, aporte.socioId))
+    .get();
+  if (!socio) return c.json({ error: 'Socio not found' }, 404);
+  if (!permite(permisos, socio.estadoId, 'pagos')) return c.json(ERROR_PERMISO, 409);
 
   const montoAbono = body.monto !== undefined ? Number(body.monto) : aporte.saldoPendiente;
   if (montoAbono <= 0) return c.json({ error: 'El monto debe ser mayor a 0' }, 400);
@@ -190,6 +232,16 @@ aportes.post('/:id/anular', async (c) => {
   if (!aporte) return c.json({ error: 'Aporte not found' }, 404);
   if (aporte.estado === 'anulado') return c.json({ error: 'Aporte already voided' }, 400);
 
+  // Enforcement 'anulaciones'
+  const permisos = cargarPermisosPorEstado();
+  const socio = db
+    .select({ estadoId: schema.socios.estadoId })
+    .from(schema.socios)
+    .where(eq(schema.socios.id, aporte.socioId))
+    .get();
+  if (!socio) return c.json({ error: 'Socio not found' }, 404);
+  if (!permite(permisos, socio.estadoId, 'anulaciones')) return c.json(ERROR_PERMISO, 409);
+
   const updated = db.transaction((tx) => {
     tx.update(schema.movimientos)
       .set({ anulado: 1, razonAnulacion: `Anulación de aporte: ${body.razon}` })
@@ -215,6 +267,24 @@ aportes.put('/:id', async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
   delete body.id;
+
+  const existing = db
+    .select({ socioId: schema.aportes.socioId })
+    .from(schema.aportes)
+    .where(eq(schema.aportes.id, id))
+    .get();
+
+  if (!existing) return c.json({ error: 'Not found' }, 404);
+
+  // Enforcement 'aportes' sobre el socio del aporte
+  const permisos = cargarPermisosPorEstado();
+  const socio = db
+    .select({ estadoId: schema.socios.estadoId })
+    .from(schema.socios)
+    .where(eq(schema.socios.id, existing.socioId))
+    .get();
+  if (!socio) return c.json({ error: 'Socio not found' }, 404);
+  if (!permite(permisos, socio.estadoId, 'aportes')) return c.json(ERROR_PERMISO, 409);
 
   const result = db
     .update(schema.aportes)
