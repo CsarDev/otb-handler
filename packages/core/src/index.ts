@@ -1,3 +1,33 @@
+export type EstadoSocio = {
+  id: string;
+  nombre: string;
+  color: string; // hex usado en badges/filtros
+  esActivo: number; // 0|1
+  esBaja: number; // 0|1
+  esDefecto: number; // 0|1
+  orden: number;
+  accionIds: string[]; // M:N aplanada en la respuesta
+};
+
+export type AccionSocio = {
+  id: string;
+  clave: string; // slug estable: 'asistencia', 'pagos'...
+  nombre: string;
+  descripcion: string | null;
+  orden: number;
+};
+
+export type Grupo = {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+};
+
+export type SocioGrupo = {
+  socioId: string;
+  grupoId: string;
+};
+
 export type Socio = {
   id: string;
   nombre: string;
@@ -12,7 +42,48 @@ export type Socio = {
   fechaIng: string | null;
   fechaAlta: string | null;
   aporteBase: number;
-  estado: 'activo' | 'inactivo' | 'suspendido';
+  estadoId: string | null;
+  estadoNombre: string | null; // vía join, solo en respuestas
+  estadoColor: string | null; // vía join, solo en respuestas
+  esActivo: number; // vía join, solo en respuestas
+  grupoPrimarioId: string | null;
+  grupos: { id: string; nombre: string }[]; // adicionales, en respuestas
+  motivoBaja: string | null;
+  fechaBaja: string | null;
+};
+
+export type SocioInput = Omit<Socio, 'estadoNombre' | 'estadoColor' | 'esActivo' | 'grupos'> & {
+  grupoAdicionalIds?: string[]; // payload de POST/PUT
+};
+
+export type EstadoSocioInput = {
+  nombre: string;
+  color?: string;
+  esActivo?: number;
+  esBaja?: number;
+  esDefecto?: number;
+  orden?: number;
+  accionIds?: string[]; // default = todas las acciones si se omite
+};
+
+export type EstadoAccionesRequest = {
+  accionIds: string[];
+};
+
+export type AccionSocioInput = {
+  clave: string;
+  nombre: string;
+  descripcion?: string | null;
+  orden?: number;
+};
+
+export type GrupoInput = {
+  nombre: string;
+  descripcion?: string | null;
+};
+
+export type BajaSocioRequest = {
+  motivo: string;
 };
 
 export type TipoActividad = {
@@ -189,4 +260,16 @@ export function formatearFecha(date: Date): string {
 
 export function formatearMoneda(monto: number): string {
   return `Bs ${monto.toFixed(2)}`;
+}
+
+/**
+ * Predicado puro (sin DB): resuelve si el estado del socio permite una acción.
+ * `clavesPermitidas` es el Set<clave> de acciones del estado del socio,
+ * cargado una sola vez por request (ver packages/api/src/lib/permisos.ts).
+ */
+export function socioPermite(
+  clavesPermitidas: ReadonlySet<string>, // Set<clave> del estado del socio
+  accionClave: string,
+): boolean {
+  return clavesPermitidas.has(accionClave);
 }
