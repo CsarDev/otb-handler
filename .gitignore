@@ -4,6 +4,8 @@ tmp/
 .nx/
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.log
 .env
 .env.local
