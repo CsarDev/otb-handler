@@ -70,15 +70,5 @@
   
   "production": {
     "outputRoot": "dist"
-  },
-  
-  "tasksRunnerOptions": {
-    "default": {
-      "runner": "nx-cloud",
-      "options": {
-        "cacheableOperations": ["build", "test", "lint", "typecheck"],
-        "remoteCache": true
-      }
-    }
   }
 }
