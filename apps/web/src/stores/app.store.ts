@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   Socio,
+  SocioInput,
   Aporte,
   Multa,
   Egreso,
@@ -11,6 +12,12 @@ import type {
   BalanceReport,
   LibroDiarioEntry,
   ResumenSocioReport,
+  EstadoSocio,
+  AccionSocio,
+  Grupo,
+  EstadoSocioInput,
+  AccionSocioInput,
+  GrupoInput,
 } from '@otb/core';
 
 const BASE = '/api';
@@ -36,8 +43,27 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-type AporteFilters = { socioId?: string; mes?: string; gestion?: string; estado?: string; tipo?: string; fechaDesde?: string; fechaHasta?: string };
-type MultaFilters = { socioId?: string; estado?: string; actividadId?: string; fechaDesde?: string; fechaHasta?: string; gestion?: string };
+type AporteFilters = {
+  socioId?: string;
+  mes?: string;
+  gestion?: string;
+  estado?: string;
+  tipo?: string;
+  fechaDesde?: string;
+  fechaHasta?: string;
+  estadoId?: string;
+  grupoId?: string;
+};
+type MultaFilters = {
+  socioId?: string;
+  estado?: string;
+  actividadId?: string;
+  fechaDesde?: string;
+  fechaHasta?: string;
+  gestion?: string;
+  estadoId?: string;
+  grupoId?: string;
+};
 type EgresoFilters = { categoria?: string; fechaDesde?: string; fechaHasta?: string };
 
 type DashboardData = {
@@ -61,10 +87,11 @@ type AppState = {
   socios: Socio[];
   sociosLoading: boolean;
   sociosError: string | null;
-  fetchSocios: (search?: string) => Promise<void>;
-  createSocio: (data: Partial<Socio>) => Promise<Socio>;
-  updateSocio: (id: string, data: Partial<Socio>) => Promise<Socio>;
+  fetchSocios: (search?: string, estadoId?: string, grupoId?: string) => Promise<void>;
+  createSocio: (data: Partial<SocioInput>) => Promise<Socio>;
+  updateSocio: (id: string, data: Partial<SocioInput>) => Promise<Socio>;
   deleteSocio: (id: string) => Promise<void>;
+  bajaSocio: (id: string, motivo: string) => Promise<Socio>;
 
   aportes: Aporte[];
   aportesLoading: boolean;
@@ -101,11 +128,14 @@ type AppState = {
   asistenciaRecords: Asistencia[];
   asistenciaLoading: boolean;
   asistenciaError: string | null;
-  fetchAsistencia: (actividadId: string) => Promise<void>;
+  fetchAsistencia: (actividadId: string, estadoId?: string, grupoId?: string) => Promise<void>;
   saveAsistencia: (actividadId: string, registros: { socioId: string; tipoAsistencia: string; minutosTardanza?: number }[]) => Promise<void>;
 
   config: OTBConfig | null;
   tiposActividad: TipoActividad[];
+  estadosSocio: EstadoSocio[];
+  accionesSocio: AccionSocio[];
+  grupos: Grupo[];
   configLoading: boolean;
   configError: string | null;
   fetchConfig: () => Promise<void>;
@@ -113,14 +143,23 @@ type AppState = {
   addTipoActividad: (tipo: TipoActividad) => Promise<void>;
   updateTipoActividad: (id: string, data: Partial<TipoActividad>) => Promise<void>;
   removeTipoActividad: (id: string) => Promise<void>;
+  addEstadoSocio: (data: EstadoSocioInput) => Promise<void>;
+  updateEstadoSocio: (id: string, data: Partial<EstadoSocioInput>) => Promise<void>;
+  removeEstadoSocio: (id: string) => Promise<void>;
+  setEstadoAcciones: (id: string, accionIds: string[]) => Promise<void>;
+  addAccionSocio: (data: AccionSocioInput) => Promise<void>;
+  removeAccionSocio: (id: string) => Promise<void>;
+  addGrupo: (data: GrupoInput) => Promise<void>;
+  updateGrupo: (id: string, data: Partial<GrupoInput>) => Promise<void>;
+  removeGrupo: (id: string) => Promise<void>;
 
   balanceReport: BalanceReport | null;
   libroDiario: LibroDiarioEntry[];
   resumenSocio: ResumenSocioReport | null;
   reportsLoading: boolean;
   fetchBalance: (gestion?: number, mes?: string, fechaDesde?: string, fechaHasta?: string) => Promise<void>;
-  fetchLibroDiario: (fechaDesde?: string, fechaHasta?: string, gestion?: string, mes?: string, tipo?: string) => Promise<void>;
-  fetchResumenSocio: (socioId: string, gestion?: string, mes?: string, fechaDesde?: string, fechaHasta?: string, tipo?: string) => Promise<void>;
+  fetchLibroDiario: (fechaDesde?: string, fechaHasta?: string, gestion?: string, mes?: string, tipo?: string, estadoId?: string, grupoId?: string) => Promise<void>;
+  fetchResumenSocio: (socioId: string, gestion?: string, mes?: string, fechaDesde?: string, fechaHasta?: string, tipo?: string, estadoId?: string, grupoId?: string) => Promise<void>;
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -143,10 +182,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   socios: [],
   sociosLoading: false,
   sociosError: null,
-  fetchSocios: async (search) => {
+  fetchSocios: async (search, estadoId, grupoId) => {
     set({ sociosLoading: true, sociosError: null });
     try {
-      const qs = search ? `?search=${encodeURIComponent(search)}` : '';
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (estadoId) params.set('estadoId', estadoId);
+      if (grupoId) params.set('grupoId', grupoId);
+      const qs = params.toString() ? `?${params}` : '';
       const data = await request<Socio[]>(`/socios${qs}`);
       set({ socios: data, sociosLoading: false });
     } catch (e) {
@@ -167,6 +210,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     await request(`/socios/${id}`, { method: 'DELETE' });
     set({ socios: get().socios.filter((s) => s.id !== id) });
   },
+  bajaSocio: async (id, motivo) => {
+    const socio = await request<Socio>(`/socios/${id}/baja`, {
+      method: 'POST',
+      body: JSON.stringify({ motivo }),
+    });
+    set({ socios: get().socios.map((s) => (s.id === id ? socio : s)) });
+    return socio;
+  },
 
   aportes: [],
   aportesLoading: false,
@@ -182,6 +233,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (filters?.tipo) params.set('tipo', filters.tipo);
       if (filters?.fechaDesde) params.set('fechaDesde', filters.fechaDesde);
       if (filters?.fechaHasta) params.set('fechaHasta', filters.fechaHasta);
+      if (filters?.estadoId) params.set('estadoId', filters.estadoId);
+      if (filters?.grupoId) params.set('grupoId', filters.grupoId);
       const qs = params.toString() ? `?${params}` : '';
       const data = await request<Aporte[]>(`/aportes${qs}`);
       set({ aportes: data, aportesLoading: false });
@@ -213,6 +266,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (filters?.fechaDesde) params.set('fechaDesde', filters.fechaDesde);
       if (filters?.fechaHasta) params.set('fechaHasta', filters.fechaHasta);
       if (filters?.gestion) params.set('gestion', filters.gestion);
+      if (filters?.estadoId) params.set('estadoId', filters.estadoId);
+      if (filters?.grupoId) params.set('grupoId', filters.grupoId);
       const qs = params.toString() ? `?${params}` : '';
       const data = await request<Multa[]>(`/multas${qs}`);
       set({ multas: data, multasLoading: false });
@@ -303,10 +358,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   asistenciaRecords: [],
   asistenciaLoading: false,
   asistenciaError: null,
-  fetchAsistencia: async (actividadId) => {
+  fetchAsistencia: async (actividadId, estadoId, grupoId) => {
     set({ asistenciaLoading: true, asistenciaError: null });
     try {
-      const data = await request<Asistencia[]>(`/asistencia/actividad/${actividadId}`);
+      const params = new URLSearchParams();
+      if (estadoId) params.set('estadoId', estadoId);
+      if (grupoId) params.set('grupoId', grupoId);
+      const qs = params.toString() ? `?${params}` : '';
+      const data = await request<Asistencia[]>(`/asistencia/actividad/${actividadId}${qs}`);
       set({ asistenciaRecords: data, asistenciaLoading: false });
     } catch (e) {
       set({ asistenciaError: (e as Error).message, asistenciaLoading: false });
@@ -322,16 +381,29 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   config: null,
   tiposActividad: [],
+  estadosSocio: [],
+  accionesSocio: [],
+  grupos: [],
   configLoading: false,
   configError: null,
   fetchConfig: async () => {
     set({ configLoading: true, configError: null });
     try {
-      const [config, tiposActividad] = await Promise.all([
+      const [config, tiposActividad, estadosSocio, accionesSocio, grupos] = await Promise.all([
         request<OTBConfig>('/config').catch(() => null),
         request<TipoActividad[]>('/tipos-actividad').catch(() => []),
+        request<EstadoSocio[]>('/estados-socio').catch(() => []),
+        request<AccionSocio[]>('/acciones-socio').catch(() => []),
+        request<Grupo[]>('/grupos').catch(() => []),
       ]);
-      set({ config, tiposActividad: Array.isArray(tiposActividad) ? tiposActividad : [], configLoading: false });
+      set({
+        config,
+        tiposActividad: Array.isArray(tiposActividad) ? tiposActividad : [],
+        estadosSocio: Array.isArray(estadosSocio) ? estadosSocio : [],
+        accionesSocio: Array.isArray(accionesSocio) ? accionesSocio : [],
+        grupos: Array.isArray(grupos) ? grupos : [],
+        configLoading: false,
+      });
     } catch (e) {
       set({ configError: (e as Error).message, configLoading: false });
     }
@@ -351,6 +423,45 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeTipoActividad: async (id) => {
     const tipos = await request<TipoActividad[]>(`/tipos-actividad/${id}`, { method: 'DELETE' });
     set({ tiposActividad: tipos });
+  },
+  addEstadoSocio: async (data) => {
+    const estados = await request<EstadoSocio[]>('/estados-socio', { method: 'POST', body: JSON.stringify(data) });
+    set({ estadosSocio: estados });
+  },
+  updateEstadoSocio: async (id, data) => {
+    const estados = await request<EstadoSocio[]>(`/estados-socio/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    set({ estadosSocio: estados });
+  },
+  removeEstadoSocio: async (id) => {
+    const estados = await request<EstadoSocio[]>(`/estados-socio/${id}`, { method: 'DELETE' });
+    set({ estadosSocio: estados });
+  },
+  setEstadoAcciones: async (id, accionIds) => {
+    const estados = await request<EstadoSocio[]>(`/estados-socio/${id}/acciones`, {
+      method: 'PUT',
+      body: JSON.stringify({ accionIds }),
+    });
+    set({ estadosSocio: estados });
+  },
+  addAccionSocio: async (data) => {
+    const acciones = await request<AccionSocio[]>('/acciones-socio', { method: 'POST', body: JSON.stringify(data) });
+    set({ accionesSocio: acciones });
+  },
+  removeAccionSocio: async (id) => {
+    const acciones = await request<AccionSocio[]>(`/acciones-socio/${id}`, { method: 'DELETE' });
+    set({ accionesSocio: acciones });
+  },
+  addGrupo: async (data) => {
+    const grupos = await request<Grupo[]>('/grupos', { method: 'POST', body: JSON.stringify(data) });
+    set({ grupos });
+  },
+  updateGrupo: async (id, data) => {
+    const grupos = await request<Grupo[]>(`/grupos/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    set({ grupos });
+  },
+  removeGrupo: async (id) => {
+    const grupos = await request<Grupo[]>(`/grupos/${id}`, { method: 'DELETE' });
+    set({ grupos });
   },
 
   balanceReport: null,
@@ -372,7 +483,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ reportsLoading: false });
     }
   },
-  fetchLibroDiario: async (fechaDesde, fechaHasta, gestion, mes, tipo) => {
+  fetchLibroDiario: async (fechaDesde, fechaHasta, gestion, mes, tipo, estadoId, grupoId) => {
     set({ reportsLoading: true });
     try {
       const params = new URLSearchParams();
@@ -381,6 +492,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (gestion) params.set('gestion', gestion);
       if (mes) params.set('mes', mes);
       if (tipo && tipo !== 'todos') params.set('tipo', tipo);
+      if (estadoId) params.set('estadoId', estadoId);
+      if (grupoId) params.set('grupoId', grupoId);
       const qs = params.toString() ? `?${params}` : '';
       const data = await request<LibroDiarioEntry[]>(`/reportes/libro-diario${qs}`);
       set({ libroDiario: data, reportsLoading: false });
@@ -388,7 +501,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ reportsLoading: false });
     }
   },
-  fetchResumenSocio: async (socioId, gestion, mes, fechaDesde, fechaHasta, tipo) => {
+  fetchResumenSocio: async (socioId, gestion, mes, fechaDesde, fechaHasta, tipo, estadoId, grupoId) => {
     set({ reportsLoading: true });
     try {
       const params = new URLSearchParams();
@@ -397,6 +510,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (fechaDesde) params.set('fechaDesde', fechaDesde);
       if (fechaHasta) params.set('fechaHasta', fechaHasta);
       if (tipo && tipo !== 'todos') params.set('tipo', tipo);
+      if (estadoId) params.set('estadoId', estadoId);
+      if (grupoId) params.set('grupoId', grupoId);
       const qs = params.toString() ? `?${params}` : '';
       const data = await request<ResumenSocioReport>(`/reportes/resumen-socio/${socioId}${qs}`);
       set({ resumenSocio: data, reportsLoading: false });
