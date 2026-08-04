@@ -4,12 +4,14 @@ import type {
   SocioInput,
   Aporte,
   Multa,
+  Movimiento,
   Egreso,
   Actividad,
   Asistencia,
   TipoActividad,
   OTBConfig,
   BalanceReport,
+  BulkAporteRequest,
   LibroDiarioEntry,
   ResumenSocioReport,
   EstadoSocio,
@@ -18,6 +20,8 @@ import type {
   EstadoSocioInput,
   AccionSocioInput,
   GrupoInput,
+  TipoAporte,
+  TipoAporteInput,
 } from '@otb/core';
 
 const BASE = '/api';
@@ -65,6 +69,8 @@ type MultaFilters = {
   grupoId?: string;
 };
 type EgresoFilters = { categoria?: string; fechaDesde?: string; fechaHasta?: string };
+
+type AporteBulkResult = { count: number; items: Aporte[] };
 
 type DashboardData = {
   totalSocios: number;
@@ -136,6 +142,9 @@ type AppState = {
   estadosSocio: EstadoSocio[];
   accionesSocio: AccionSocio[];
   grupos: Grupo[];
+  tiposAporte: TipoAporte[];
+  tiposAporteLoading: boolean;
+  tiposAporteError: string | null;
   configLoading: boolean;
   configError: string | null;
   fetchConfig: () => Promise<void>;
@@ -152,6 +161,13 @@ type AppState = {
   addGrupo: (data: GrupoInput) => Promise<void>;
   updateGrupo: (id: string, data: Partial<GrupoInput>) => Promise<void>;
   removeGrupo: (id: string) => Promise<void>;
+  fetchTiposAporte: () => Promise<void>;
+  addTipoAporte: (data: TipoAporteInput) => Promise<void>;
+  updateTipoAporte: (id: string, data: Partial<TipoAporteInput>) => Promise<void>;
+  removeTipoAporte: (id: string) => Promise<void>;
+  createAportesBulk: (payload: BulkAporteRequest) => Promise<AporteBulkResult>;
+  createAportesBulkAll: (payload: Omit<BulkAporteRequest, 'socioIds'>) => Promise<AporteBulkResult>;
+  fetchPagosAporte: (id: string) => Promise<Movimiento[]>;
 
   balanceReport: BalanceReport | null;
   libroDiario: LibroDiarioEntry[];
@@ -384,17 +400,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   estadosSocio: [],
   accionesSocio: [],
   grupos: [],
+  tiposAporte: [],
+  tiposAporteLoading: false,
+  tiposAporteError: null,
   configLoading: false,
   configError: null,
   fetchConfig: async () => {
     set({ configLoading: true, configError: null });
     try {
-      const [config, tiposActividad, estadosSocio, accionesSocio, grupos] = await Promise.all([
+      const [config, tiposActividad, estadosSocio, accionesSocio, grupos, tiposAporte] = await Promise.all([
         request<OTBConfig>('/config').catch(() => null),
         request<TipoActividad[]>('/tipos-actividad').catch(() => []),
         request<EstadoSocio[]>('/estados-socio').catch(() => []),
         request<AccionSocio[]>('/acciones-socio').catch(() => []),
         request<Grupo[]>('/grupos').catch(() => []),
+        request<TipoAporte[]>('/tipos-aporte').catch(() => []),
       ]);
       set({
         config,
@@ -402,6 +422,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         estadosSocio: Array.isArray(estadosSocio) ? estadosSocio : [],
         accionesSocio: Array.isArray(accionesSocio) ? accionesSocio : [],
         grupos: Array.isArray(grupos) ? grupos : [],
+        tiposAporte: Array.isArray(tiposAporte) ? tiposAporte : [],
         configLoading: false,
       });
     } catch (e) {
@@ -463,6 +484,45 @@ export const useAppStore = create<AppState>((set, get) => ({
     const grupos = await request<Grupo[]>(`/grupos/${id}`, { method: 'DELETE' });
     set({ grupos });
   },
+  fetchTiposAporte: async () => {
+    set({ tiposAporteLoading: true, tiposAporteError: null });
+    try {
+      const tipos = await request<TipoAporte[]>('/tipos-aporte');
+      set({ tiposAporte: Array.isArray(tipos) ? tipos : [], tiposAporteLoading: false });
+    } catch (e) {
+      set({ tiposAporteError: (e as Error).message, tiposAporteLoading: false });
+    }
+  },
+  addTipoAporte: async (data) => {
+    // El endpoint devuelve el catálogo completo; se reemplaza la lista (patrón tiposActividad)
+    const tipos = await request<TipoAporte[]>('/tipos-aporte', { method: 'POST', body: JSON.stringify(data) });
+    set({ tiposAporte: tipos });
+  },
+  updateTipoAporte: async (id, data) => {
+    const tipos = await request<TipoAporte[]>(`/tipos-aporte/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    set({ tiposAporte: tipos });
+  },
+  removeTipoAporte: async (id) => {
+    // DELETE guarda 409 cuando hay socios usando el tipo; el mensaje amigable se propaga al UI
+    const tipos = await request<TipoAporte[]>(`/tipos-aporte/${id}`, { method: 'DELETE' });
+    set({ tiposAporte: tipos });
+  },
+  createAportesBulk: async (payload) => {
+    return request<AporteBulkResult>('/aportes/bulk', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  createAportesBulkAll: async (payload) => {
+    // /bulk/all resuelve todos los socios permitidos; el payload NO lleva socioIds
+    return request<AporteBulkResult>('/aportes/bulk/all', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  fetchPagosAporte: async (id) => {
+    return request<Movimiento[]>(`/aportes/${id}/pagos`);
+  },
 
   balanceReport: null,
   libroDiario: [],
@@ -520,3 +580,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 }));
+
+/**
+ * Selector de tipos de aporte activos (activo=1), para el select de socio y la UI de config.
+ */
+export function selectTiposAporteActivos(tipos: TipoAporte[]): TipoAporte[] {
+  return tipos.filter((t) => t.activo === 1);
+}
+
+/**
+ * Derivación del monto mensual por tipo de aporte: dado el array del catálogo y el
+ * tipoAporteId asignado a un socio, devuelve su `montoBase` (0 si el tipo no existe).
+ */
+export function montoBaseDeTipoAporte(
+  tipos: TipoAporte[],
+  tipoAporteId: string | null | undefined,
+): number {
+  const tipo = tipos.find((t) => t.id === tipoAporteId);
+  return tipo ? tipo.montoBase : 0;
+}
