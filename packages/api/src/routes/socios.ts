@@ -276,10 +276,14 @@ socios.put('/:id', async (c) => {
       .where(eq(schema.socios.id, id))
       .run();
 
-    // Reemplazo atómico de grupos adicionales
-    tx.delete(schema.socioGrupos).where(eq(schema.socioGrupos.socioId, id)).run();
-    for (const grupoId of grupos.grupoAdicionalIds ?? []) {
-      tx.insert(schema.socioGrupos).values({ socioId: id, grupoId }).run();
+    // Reemplazo atómico de grupos adicionales: SOLO cuando el body los declara.
+    // Si el cliente no envía grupoAdicionalIds (update parcial), se preservan
+    // las membresías existentes en vez de borrarlas silenciosamente.
+    if (grupos.grupoAdicionalIds !== undefined) {
+      tx.delete(schema.socioGrupos).where(eq(schema.socioGrupos.socioId, id)).run();
+      for (const grupoId of grupos.grupoAdicionalIds) {
+        tx.insert(schema.socioGrupos).values({ socioId: id, grupoId }).run();
+      }
     }
   });
 

@@ -113,7 +113,10 @@ export default function SociosPage() {
   }
 
   function openEdit(socio: Socio) {
-    const parsed = socioSchema.parse(socio);
+    // La API expone los grupos adicionales como `grupos: [{ id, nombre }]`,
+    // no como `grupoAdicionalIds`; mapear acá evita que el form resete a []
+    // y que el PUT borre las membresías al guardar.
+    const parsed = socioSchema.parse({ ...socio, grupoAdicionalIds: socio.grupos.map((g) => g.id) });
     setEditing({ id: socio.id, ...parsed });
     form.reset(parsed);
     setModalOpen(true);
