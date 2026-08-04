@@ -23,20 +23,62 @@ export type Grupo = {
   descripcion: string | null;
 };
 
-export type TipoAporte = {
-  id: string;
+export type Recurrencia = 'mensual' | 'anual' | 'unico' | 'extraordinario';
+
+export type ModalidadPago = 'cuotas' | 'parciales' | 'pago_unico';
+
+/** Aporte = DEFINICIÓN de aporte (era `TipoAporte`). El aporte ES la definición dinámica. */
+export type Aporte = {
+  id: string; // slug del cliente, p.ej. 'ap-mensual'; inmutable
   nombre: string;
-  montoBase: number;
-  descripcion: string | null;
+  monto: number; // Bs, >= 0
+  recurrencia: Recurrencia;
+  inicio: string | null; // YYYY-MM-DD
+  fin: string | null; // YYYY-MM-DD; fin >= inicio cuando ambos están seteados
+  modalidadPago: ModalidadPago;
+  aplicaGrupoId: string | null; // null = global
   activo: number; // 0|1
 };
 
-export type TipoAporteInput = {
+export type AporteInput = {
+  id?: string; // POST acepta slug; PUT debe ignorarlo
   nombre: string;
-  montoBase: number;
-  descripcion?: string | null;
-  activo?: number; // 0|1
+  monto: number;
+  recurrencia?: Recurrencia; // default 'mensual' (D6)
+  inicio?: string | null;
+  fin?: string | null;
+  modalidadPago?: ModalidadPago; // default 'cuotas' (D4)
+  aplicaGrupoId?: string | null;
+  activo?: number; // default 1
 };
+
+/**
+ * APORTE_REGISTRO / cobro (renombre del viejo tipo record `Aporte`).
+ * `aporteId` es la linaje a la definición (nullable para registros legacy).
+ */
+export type AporteRegistro = {
+  id: string;
+  socioId: string;
+  aporteId: string | null; // FK → aportes_definicion
+  socioNombre?: string | null;
+  socioApellido?: string | null; // join
+  mes: number | null;
+  gestion: number | null;
+  tipo: string; // denormalizado de recurrencia (D2)
+  montoBase: number; // snapshot de definition.monto (D2)
+  montoPagado: number;
+  saldoPendiente: number;
+  razonAnulacion: string | null;
+  numeroRecibo: string | null;
+  fechaPago: string | null;
+  estado: 'pendiente' | 'pagado' | 'anulado';
+};
+
+export type Cobro = AporteRegistro;
+
+export type SocioAporte = { socioId: string; aporteId: string };
+
+export type AporteInherited = { id: string; nombre: string; grupoId: string; grupoNombre: string };
 
 export type SocioGrupo = {
   socioId: string;
@@ -56,16 +98,8 @@ export type Socio = {
   fechaNac: string | null;
   fechaIng: string | null;
   fechaAlta: string | null;
-  // Derivado del `montoBase` del tipo asignado (vía join) — NO es una fuente
-  // de verdad propia; se expone en el response para compat con lecturas
-  // legacy/UI. Un socio legacy con tipo NULL se presenta con el tipo activo
-  // por defecto, así que siempre se resuelve.
-  aporteBase: number;
-  // Vía FK a tipos_aporte.id. La API los garantiza en POST/PUT (default al tipo
-  // activo, D3) y, para socios legacy (NULL), el shape los resuelve con el tipo
-  // activo por defecto en `armarSocio`. Por eso son REQUIRED en la salida.
-  tipoAporteId: string;
-  tipoAporteNombre: string; // vía join, siempre resuelto con el fallback al default
+  aporteIds: string[]; // asignaciones directas (editables) → socio_aportes
+  aportesInherited: AporteInherited[]; // read-only, resueltas dinámicamente por grupo (D5)
   estadoId: string | null;
   estadoNombre: string | null; // vía join, solo en respuestas
   estadoColor: string | null; // vía join, solo en respuestas
@@ -76,19 +110,18 @@ export type Socio = {
   fechaBaja: string | null;
 };
 
-// Input de POST/PUT de socio: `aporteBase` NO es escribible (derivado del tipo);
-// `tipoAporteId` es opcional en el input y default al tipo activo si se omite.
+// Input de POST/PUT de socio: `aporteIds` es opcional en el input (omitiéndolo
+// el PUT PRESERVA la asignación; ausente/[] en POST = sin asignación directa).
 export type SocioInput = Omit<
   Socio,
   | 'estadoNombre'
   | 'estadoColor'
   | 'esActivo'
   | 'grupos'
-  | 'tipoAporteNombre'
-  | 'aporteBase'
-  | 'tipoAporteId'
+  | 'aporteIds'
+  | 'aportesInherited'
 > & {
-  tipoAporteId?: string;
+  aporteIds?: string[]; // ONE OR MORE; omitido en PUT preserva
   grupoAdicionalIds?: string[]; // payload de POST/PUT
 };
 
@@ -146,23 +179,6 @@ export type Asistencia = {
   tipoAsistencia: 'asistio' | 'falta' | 'tardanza' | 'justificado';
   minutosTardanza: number;
   fechaReg: string;
-};
-
-export type Aporte = {
-  id: string;
-  socioId: string;
-  socioNombre: string | null;
-  socioApellido: string | null;
-  mes: number | null;
-  gestion: number | null;
-  tipo: string;
-  montoBase: number;
-  montoPagado: number;
-  saldoPendiente: number;
-  razonAnulacion: string | null;
-  numeroRecibo: string | null;
-  fechaPago: string | null;
-  estado: 'pendiente' | 'pagado' | 'anulado';
 };
 
 export type Multa = {
@@ -224,7 +240,7 @@ export type ResumenSocioReport = {
   totalAportado: number;
   multasPagadas: number;
   saldoPendienteMultas: number;
-  aportesPendientes: (Aporte & { socioNombre: string | null; socioApellido: string | null })[];
+  aportesPendientes: (AporteRegistro & { socioNombre: string | null; socioApellido: string | null })[];
   multasPendientes: (Multa & { socioNombre: string | null; socioApellido: string | null })[];
 };
 
@@ -240,14 +256,19 @@ export type BulkMultaRequest = {
   fecha?: string;
 };
 
+/** Definition-driven (D8): NO monto / NO tipo override (D9). */
 export type BulkAporteRequest = {
   socioIds?: string[]; // omitido en /bulk/all (se resuelven todos los permitidos)
-  tipo: 'mensual' | 'unico' | 'anual' | 'extraordinario';
-  monto?: number; // override, SOLO unico/extraordinario
-  montoBase?: number; // legacy del cliente; se deriva del tipo del socio por defecto
+  aporteIds: string[]; // ONE OR MORE definiciones activas
+  gestion: number;
+  mes?: number; // cota inferior opcional para mensual
+};
+
+export type CrearAporteRequest = {
+  socioId: string;
+  aporteId: string;
   gestion: number;
   mes?: number;
-  meses?: number;
 };
 
 export type AnularRequest = {
@@ -268,7 +289,7 @@ export type DBData = {
   tiposActividad: TipoActividad[];
   actividades: Actividad[];
   asistencia: Asistencia[];
-  aportes: Aporte[];
+  aportes: AporteRegistro[];
   multas: Multa[];
   movimientos: Movimiento[];
   egresos: Egreso[];
