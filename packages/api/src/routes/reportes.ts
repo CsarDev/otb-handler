@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and, gte, lte, sql, getTableColumns } from 'drizzle-orm';
+import { eq, and, gte, lte, sql, getTableColumns, or, inArray } from 'drizzle-orm';
+import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
 
 const reportes = new Hono();
 
@@ -85,6 +86,8 @@ reportes.get('/libro-diario', (c) => {
   const tipo = c.req.query('tipo');
   const fechaDesde = c.req.query('fechaDesde');
   const fechaHasta = c.req.query('fechaHasta');
+  const estadoId = c.req.query('estadoId');
+  const grupoId = c.req.query('grupoId');
 
   const filters: any[] = [eq(schema.movimientos.anulado, 0)];
 
@@ -97,6 +100,15 @@ reportes.get('/libro-diario', (c) => {
     filters.push(gte(schema.movimientos.fecha, `${gestion}-${mesPad}-01`), lte(schema.movimientos.fecha, `${gestion}-${mesPad}-31`));
   } else if (gestion) {
     filters.push(gte(schema.movimientos.fecha, `${gestion}-01-01`), lte(schema.movimientos.fecha, `${gestion}-12-31`));
+  }
+
+  if (estadoId) filters.push(eq(schema.socios.estadoId, estadoId));
+  if (grupoId) {
+    const subquery = db
+      .select({ socioId: schema.socioGrupos.socioId })
+      .from(schema.socioGrupos)
+      .where(eq(schema.socioGrupos.grupoId, grupoId));
+    filters.push(or(eq(schema.socios.grupoPrimarioId, grupoId), inArray(schema.socios.id, subquery)));
   }
 
   const movs = db
@@ -129,9 +141,15 @@ reportes.get('/resumen-socio/:id', (c) => {
   const fechaDesde = c.req.query('fechaDesde');
   const fechaHasta = c.req.query('fechaHasta');
   const tipo = c.req.query('tipo') ?? 'todos';
+  const estadoId = c.req.query('estadoId');
+  const grupoId = c.req.query('grupoId');
 
   const socio = db.select().from(schema.socios).where(eq(schema.socios.id, id)).get();
-  if (!socio) return c.json({ error: 'Socio no encontrado' }, 404);
+  if (!socio) return c.json({ error: 'Socio not found' }, 404);
+
+  // Enforcement 'reportes': el socio debe permitir aparecer en reportes
+  const permisos = cargarPermisosPorEstado();
+  if (!permite(permisos, socio.estadoId, 'reportes')) return c.json(ERROR_PERMISO, 409);
 
   const aporteFilters: any[] = [eq(schema.aportes.socioId, id)];
   const multaFilters: any[] = [eq(schema.multas.socioId, id)];

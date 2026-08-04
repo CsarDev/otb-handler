@@ -12,6 +12,9 @@ import dashboardRouter from './routes/dashboard';
 import configRouter from './routes/config';
 import tiposActividadRouter from './routes/tipos-actividad';
 import reportesRouter from './routes/reportes';
+import estadosSocioRouter from './routes/estados-socio';
+import accionesSocioRouter from './routes/acciones-socio';
+import gruposRouter from './routes/grupos';
 
 const api = new Hono();
 
@@ -30,6 +33,9 @@ api.route('/api/dashboard', dashboardRouter);
 api.route('/api/tipos-actividad', tiposActividadRouter);
 api.route('/api/config', configRouter);
 api.route('/api/reportes', reportesRouter);
+api.route('/api/estados-socio', estadosSocioRouter);
+api.route('/api/acciones-socio', accionesSocioRouter);
+api.route('/api/grupos', gruposRouter);
 
 export default api;
 export type ApiApp = typeof api;

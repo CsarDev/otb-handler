@@ -4,9 +4,9 @@
 
 - [x] Task-01: Schema, catálogo y migración 2 fases
 - [x] Task-02: Tipos de dominio y predicado socioPermite
-- [ ] Task-03: CRUD catálogos (estados-socio, acciones-socio, grupos)
-- [ ] Task-04: Socios modificado + lib/permisos.ts
-- [ ] Task-05: Enforcement por acción en módulos existentes
+- [x] Task-03: CRUD catálogos (estados-socio, acciones-socio, grupos)
+- [x] Task-04: Socios modificado + lib/permisos.ts
+- [x] Task-05: Enforcement por acción en módulos existentes
 - [ ] Task-06: Store Zustand + helper UI
 - [ ] Task-07: UI Config — tarjetas Estados, Acciones y Grupos
 - [ ] Task-08: UI Socios — form, filtros, badge y ficha
