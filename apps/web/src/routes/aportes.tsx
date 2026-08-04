@@ -5,7 +5,22 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 import { socioPermiteUI } from '../lib/permisos';
 import { Badge } from '@otb/ui';
-import type { Aporte } from '@otb/core';
+import type { Aporte, Movimiento, BulkAporteRequest } from '@otb/core';
+
+/**
+ * Schema del form de creación batch. Se eliminó `montoBase` suelto: para
+ * `mensual`/`anual` el monto SIEMPRE lo deriva la API del tipo de aporte de
+ * cada socio (D4/D6), así que solo existe `monto` como override opcional y se
+ * muestra/valida SOLO para `unico`/`extraordinario`.
+ */
+const crearSchema = z.object({
+  socioIds: z.array(z.string()).default([]),
+  tipo: z.enum(['mensual', 'unico', 'anual', 'extraordinario']),
+  // '' = sin override (el monto deriva del tipo); número = override para unico/extra
+  monto: z.union([z.literal(''), z.coerce.number().min(0.01, 'Monto requerido')]).default(''),
+  gestion: z.coerce.number().min(2000, 'Gestión requerida'),
+  mes: z.coerce.number().int().min(1).max(12),
+});
 
 const pagarSchema = z.object({
   monto: z.coerce.number().min(0.01, 'Monto requerido'),
@@ -13,6 +28,7 @@ const pagarSchema = z.object({
   fechaPago: z.string().min(1, 'Fecha requerida'),
 });
 
+type CrearForm = z.infer<typeof crearSchema>;
 type PagarForm = z.infer<typeof pagarSchema>;
 
 /** Badge de estado del socio con color del catálogo (hex inline). */
@@ -27,9 +43,12 @@ function SocioEstadoBadge({ aporte, socioById }: { aporte: Aporte; socioById: Ma
 }
 
 export default function AportesPage() {
-  const { aportes, aportesLoading, aportesError, fetchAportes, pagarAporte, anularAporte } = useAppStore();
+  const {
+    aportes, aportesLoading, aportesError, fetchAportes, pagarAporte, anularAporte,
+    createAportesBulk, createAportesBulkAll, fetchPagosAporte,
+  } = useAppStore();
   const { socios, fetchSocios } = useAppStore();
-  const { estadosSocio, accionesSocio, grupos, fetchConfig } = useAppStore();
+  const { estadosSocio, accionesSocio, grupos, tiposAporte, fetchConfig } = useAppStore();
   const [tab, setTab] = useState<'crear' | 'pagar'>('pagar');
   const [filters, setFilters] = useState({ socioId: '', mes: '', gestion: '', estado: '', tipo: '', fechaDesde: '', fechaHasta: '', estadoId: '', grupoId: '' });
   const [payingId, setPayingId] = useState<string | null>(null);
@@ -37,19 +56,34 @@ export default function AportesPage() {
   const [voidReason, setVoidReason] = useState('');
 
   /* ── Create batch form state ── */
-  const [createTipo, setCreateTipo] = useState<'mensual' | 'unico' | 'anual'>('mensual');
-  const [createMonto, setCreateMonto] = useState(0);
-  const [createGestion, setCreateGestion] = useState(new Date().getFullYear());
-  const [createMes, setCreateMes] = useState(new Date().getMonth() + 1);
-  const [createMeses, setCreateMeses] = useState(1);
-  const [createSocios, setCreateSocios] = useState<string[]>([]);
   const [allSocios, setAllSocios] = useState(false);
   const [creating, setCreating] = useState(false);
+
+  /* ── Payment history (modal) state ── */
+  const [pagosAporteId, setPagosAporteId] = useState<string | null>(null);
+  const [pagos, setPagos] = useState<Movimiento[]>([]);
+  const [pagosLoading, setPagosLoading] = useState(false);
+  const [pagosError, setPagosError] = useState<string | null>(null);
+
+  const createForm = useForm<CrearForm>({
+    resolver: zodResolver(crearSchema) as any,
+    defaultValues: {
+      socioIds: [],
+      tipo: 'mensual',
+      monto: '',
+      gestion: new Date().getFullYear(),
+      mes: new Date().getMonth() + 1,
+    },
+  });
 
   const payForm = useForm<PagarForm>({
     resolver: zodResolver(pagarSchema) as any,
     defaultValues: { monto: 0, numeroRecibo: '', fechaPago: new Date().toISOString().split('T')[0] },
   });
+
+  const createTipo = createForm.watch('tipo');
+  // D4: el override de monto solo aplica a unico/extraordinario.
+  const permiteOverride = createTipo === 'unico' || createTipo === 'extraordinario';
 
   useEffect(() => {
     fetchSocios();
@@ -72,41 +106,46 @@ export default function AportesPage() {
     } : undefined);
   }, [tab, filters, fetchAportes]);
 
-  async function handleCreate() {
-    // Solo socios cuyo estado permite "aportes"
-    const seleccionables = socios.filter((s) =>
-      socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'aportes'),
-    );
-    const selectedIds = allSocios ? seleccionables.map((s) => s.id) : createSocios;
-    if (selectedIds.length === 0) { alert('Seleccione al menos un socio'); return; }
-    if (!createMonto || createMonto <= 0) { alert('Ingrese un monto válido'); return; }
+  const permitidos = socios.filter((s) =>
+    socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'aportes'),
+  );
+  const selectedIds = allSocios ? permitidos.map((s) => s.id) : createForm.watch('socioIds');
+  const socioById = new Map(socios.map((s) => [s.id, s]));
 
+  /**
+   * Firmada por el checkbox "Todos los socios habilitados": NO se arma el select
+   * en el cliente. Si `allSocios` → `createAportesBulkAll` (POST /api/aportes/bulk/all,
+   * sin socioIds, el server resuelve los permitidos por estado). Si no → `createAportesBulk`
+   * (POST /api/aportes/bulk) con socioIds explícitos. El form ya no envía `montoBase`
+   * (el monto deriva del tipo de cada socio) y NO envía `meses` para anual (el API fuerza 12).
+   */
+  async function handleCreate(data: CrearForm) {
+    if (!allSocios && data.socioIds.length === 0) { alert('Seleccione al menos un socio'); return; }
+
+    const overrideMonto = data.monto === '' ? undefined : Number(data.monto);
+    const body: BulkAporteRequest = {
+      tipo: data.tipo,
+      gestion: data.gestion,
+    };
+    if (!allSocios) body.socioIds = data.socioIds;
+    // anual NO manda `meses`: la API crea exactamente 12 registros (enero-diciembre).
+    if (data.tipo !== 'anual') body.mes = data.mes;
+    if (permiteOverride && overrideMonto !== undefined) body.monto = overrideMonto;
+
+    setCreating(true);
     try {
-      const body: any = {
-        socioIds: selectedIds,
-        montoBase: createMonto,
-        tipo: createTipo,
-        gestion: createGestion,
-      };
-      if (createTipo !== 'anual') body.mes = createMes;
-      if (createTipo === 'anual') body.meses = createMeses;
-
-      const res = await fetch('/api/aportes/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        alert(err.error ?? 'Error al crear aportes');
-        return;
-      }
+      const res = allSocios
+        ? await createAportesBulkAll(body)
+        : await createAportesBulk(body);
       await fetchAportes();
-      setCreateSocios([]);
       setAllSocios(false);
-      alert(`${selectedIds.length} aporte(s) creado(s)`);
-    } catch {
-      alert('Error al crear aportes');
+      createForm.reset();
+      alert(`${res.count} aporte(s) creado(s)`);
+    } catch (e) {
+      // El 400 "Ningún socio puede participar..." de bulk/all llega como mensaje amigable.
+      alert((e as Error).message ?? 'Error al crear aportes');
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -125,14 +164,42 @@ export default function AportesPage() {
   }
 
   function toggleSocio(id: string) {
-    setCreateSocios((prev) => prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]);
+    const current = createForm.getValues('socioIds');
+    if (current.includes(id)) {
+      createForm.setValue('socioIds', current.filter((s) => s !== id), { shouldValidate: true });
+    } else {
+      createForm.setValue('socioIds', [...current, id], { shouldValidate: true });
+    }
   }
 
-  const permitidos = socios.filter((s) =>
-    socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'aportes'),
+  /** Montos derivados (por tipo) de los socios seleccionados, para mostrarlos en el form. */
+  const montosDerivados = Array.from(
+    (() => {
+      const mapa = new Map<string, { nombre: string; monto: number }>();
+      for (const id of selectedIds) {
+        const socio = socios.find((s) => s.id === id);
+        const tipo = tiposAporte.find((t) => t.id === socio?.tipoAporteId);
+        if (tipo && !mapa.has(tipo.id)) mapa.set(tipo.id, { nombre: tipo.nombre, monto: tipo.montoBase });
+      }
+      return mapa;
+    })().values(),
   );
-  const selectedIds = allSocios ? permitidos.map((s) => s.id) : createSocios;
-  const socioById = new Map(socios.map((s) => [s.id, s]));
+
+  /** Abre el modal de historial de pagos y trae los movimientos del aporte (GET /api/aportes/:id/pagos). */
+  async function openPagos(id: string) {
+    setPagosAporteId(id);
+    setPagos([]);
+    setPagosError(null);
+    setPagosLoading(true);
+    try {
+      const items = await fetchPagosAporte(id);
+      setPagos(items);
+    } catch (e) {
+      setPagosError((e as Error).message);
+    } finally {
+      setPagosLoading(false);
+    }
+  }
 
   const tabs = [
     { key: 'pagar' as const, label: 'Pagar Aportes' },
@@ -162,8 +229,8 @@ export default function AportesPage() {
       {/* ── TAB CREAR ── */}
       {tab === 'crear' && (
         <div className="rounded-xl border bg-white p-6 shadow-sm">
-          <h3 className="mb-4 text-lg font-bold text-gray-900">Crear Aportes</h3>
-          <div className="space-y-4">
+          <h3 className="mb-4 text-lg font-bold text-gray-900">Crear Aportes Batch</h3>
+          <form onSubmit={createForm.handleSubmit(handleCreate)} className="space-y-4">
             <div>
               <label className="mb-2 block text-xs font-medium text-gray-600">Socios (solo con permiso de "aportes")</label>
               <label className="mb-2 flex cursor-pointer items-center gap-2 text-sm text-blue-600 hover:text-blue-700">
@@ -172,12 +239,16 @@ export default function AportesPage() {
               </label>
               {!allSocios && (
                 <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 p-2">
-                  {permitidos.map((s) => (
-                    <label key={s.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
-                      <input type="checkbox" checked={createSocios.includes(s.id)} onChange={() => toggleSocio(s.id)} className="rounded border-gray-300" />
-                      {s.nombre} {s.apellidoPaterno}
-                    </label>
-                  ))}
+                  {permitidos.map((s) => {
+                    const checked = createForm.watch('socioIds').includes(s.id);
+                    return (
+                      <label key={s.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
+                        <input type="checkbox" checked={checked} onChange={() => toggleSocio(s.id)} className="rounded border-gray-300" />
+                        {s.nombre} {s.apellidoPaterno}
+                      </label>
+                    );
+                  })}
+                  {permitidos.length === 0 && <p className="px-2 py-1 text-sm text-gray-400">Ningún socio tiene permiso de "aportes".</p>}
                 </div>
               )}
               <p className="mt-1 text-xs text-gray-400">{selectedIds.length} socio(s) seleccionado(s)</p>
@@ -186,45 +257,56 @@ export default function AportesPage() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">Tipo</label>
-                <select value={createTipo} onChange={(e) => setCreateTipo(e.target.value as typeof createTipo)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                  <option value="unico">Único</option>
+                <select {...createForm.register('tipo')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                   <option value="mensual">Mensual</option>
-                  <option value="anual">Anual (varios meses)</option>
+                  <option value="unico">Único</option>
+                  <option value="anual">Anual (12 meses)</option>
+                  <option value="extraordinario">Extraordinario</option>
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">Monto (Bs)</label>
-                <input type="number" step="0.01" value={createMonto} onChange={(e) => setCreateMonto(Number(e.target.value))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
-              </div>
-              <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">Gestión</label>
-                <input type="number" value={createGestion} onChange={(e) => setCreateGestion(Number(e.target.value))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+                <input type="number" {...createForm.register('gestion')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {createTipo !== 'anual' && (
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">Mes</label>
-                  <select value={createMes} onChange={(e) => setCreateMes(Number(e.target.value))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                  <select {...createForm.register('mes')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                     {Array.from({ length: 12 }, (_, i) => (<option key={i + 1} value={i + 1}>{i + 1}</option>))}
                   </select>
                 </div>
               )}
               {createTipo === 'anual' && (
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-600">Meses (1-12)</label>
-                  <input type="number" min={1} max={12} value={createMeses} onChange={(e) => setCreateMeses(Number(e.target.value))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+                <div className="flex items-end">
+                  <p className="text-xs text-gray-500">Se crean los 12 meses (enero–diciembre).</p>
                 </div>
               )}
             </div>
 
+            {/* D4: override de monto solo para unico/extraordinario; para mensual/anual deriva del tipo */}
+            {permiteOverride ? (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Monto (Bs) — override <span className="font-normal text-gray-400">(vacío = monto del tipo)</span></label>
+                <input type="number" step="0.01" {...createForm.register('monto')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+                {createForm.formState.errors.monto && <p className="text-xs text-red-500">{createForm.formState.errors.monto.message}</p>}
+              </div>
+            ) : (
+              montosDerivados.length > 0 && (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-600">Monto (derivado del tipo de cada socio)</label>
+                  <p className="text-sm text-gray-600">
+                    {montosDerivados.map((m) => `Bs ${m.monto.toFixed(2)} (${m.nombre})`).join(' · ')}
+                  </p>
+                </div>
+              )
+            )}
+
             <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={handleCreate} disabled={selectedIds.length === 0 || !createMonto} className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-                Crear {selectedIds.length > 0 ? `${selectedIds.length} aporte(s)` : ''}
+              <button type="submit" disabled={creating || (selectedIds.length === 0 && !allSocios)} className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                {creating ? 'Creando...' : `Crear ${selectedIds.length > 0 ? `${selectedIds.length} aporte(s)` : ''}`}
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 
@@ -304,6 +386,7 @@ export default function AportesPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-2">
+                          <button onClick={() => openPagos(a.id)} className="rounded px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50">Pagos</button>
                           {a.estado === 'pendiente' && (
                             <>
                               <button onClick={() => { setPayingId(a.id); payForm.setValue('monto', a.saldoPendiente ?? a.montoBase); }} className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50">Pagar</button>
@@ -340,6 +423,7 @@ export default function AportesPage() {
                     </div>
                   </dl>
                   <div className="mt-3 flex flex-wrap gap-2">
+                    <button onClick={() => openPagos(a.id)} className="rounded px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50">Pagos</button>
                     {a.estado === 'pendiente' && (
                       <>
                         <button onClick={() => { setPayingId(a.id); payForm.setValue('monto', a.saldoPendiente ?? a.montoBase); }} className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50">Pagar</button>
@@ -372,6 +456,50 @@ export default function AportesPage() {
                 <button type="submit" className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700">Pagar</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* PAGOS MODAL — historial de movimientos del aporte */}
+      {pagosAporteId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-bold text-gray-900">Historial de Pagos</h3>
+            {pagosAporteId && aportes.find((a) => a.id === pagosAporteId) && (
+              <p className="mb-3 text-sm text-gray-600">
+                {aportes.find((a) => a.id === pagosAporteId)!.socioNombre ?? pagosAporteId} · Bs{' '}
+                {(aportes.find((a) => a.id === pagosAporteId)!.montoBase ?? 0).toFixed(2)}
+              </p>
+            )}
+            {pagosLoading && <p className="text-sm text-gray-500">Cargando...</p>}
+            {pagosError && <p className="text-sm text-red-600">Error: {pagosError}</p>}
+            {!pagosLoading && !pagosError && (
+              pagos.length === 0 ? (
+                <p className="text-sm text-gray-500">Sin movimientos registrados.</p>
+              ) : (
+                <ul className="max-h-72 divide-y overflow-y-auto">
+                  {pagos.map((p) => (
+                    <li key={p.id} className="flex items-center justify-between py-2 text-sm">
+                      <div className="pr-3">
+                        <p className="font-medium text-gray-900">Bs {p.monto.toFixed(2)}</p>
+                        <p className="text-xs text-gray-500">
+                          {p.fecha}
+                          {p.numeroRecibo ? ` · Recibo ${p.numeroRecibo}` : ''}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                        p.anulado === 1 ? 'bg-gray-100 text-gray-500' : 'bg-green-100 text-green-700'
+                      }`}>
+                        {p.anulado === 1 ? 'Anulado' : 'Pagado'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )
+            )}
+            <div className="flex justify-end gap-3 pt-4">
+              <button type="button" onClick={() => setPagosAporteId(null)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Cerrar</button>
+            </div>
           </div>
         </div>
       )}
