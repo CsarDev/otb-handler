@@ -23,6 +23,21 @@ export type Grupo = {
   descripcion: string | null;
 };
 
+export type TipoAporte = {
+  id: string;
+  nombre: string;
+  montoBase: number;
+  descripcion: string | null;
+  activo: number; // 0|1
+};
+
+export type TipoAporteInput = {
+  nombre: string;
+  montoBase: number;
+  descripcion?: string | null;
+  activo?: number; // 0|1
+};
+
 export type SocioGrupo = {
   socioId: string;
   grupoId: string;
@@ -41,7 +56,13 @@ export type Socio = {
   fechaNac: string | null;
   fechaIng: string | null;
   fechaAlta: string | null;
+  // Derivado del tipo asignado (tipoAporteId) — NO es una fuente de verdad
+  // propia; se expone en el response para compat con lecturas legacy/UI.
   aporteBase: number;
+  // Vía FK a tipos_aporte.id; nullable durante la transición. La API lo
+  // garantiza en POST/PUT (default al tipo activo).
+  tipoAporteId?: string | null;
+  tipoAporteNombre?: string | null; // vía join, solo en respuestas
   estadoId: string | null;
   estadoNombre: string | null; // vía join, solo en respuestas
   estadoColor: string | null; // vía join, solo en respuestas
@@ -52,7 +73,13 @@ export type Socio = {
   fechaBaja: string | null;
 };
 
-export type SocioInput = Omit<Socio, 'estadoNombre' | 'estadoColor' | 'esActivo' | 'grupos'> & {
+// Input de POST/PUT de socio: `aporteBase` NO es escribible (derivado del tipo);
+// `tipoAporteId` es opcional y default al tipo activo si se omite.
+export type SocioInput = Omit<
+  Socio,
+  'estadoNombre' | 'estadoColor' | 'esActivo' | 'grupos' | 'tipoAporteNombre' | 'aporteBase'
+> & {
+  tipoAporteId?: string;
   grupoAdicionalIds?: string[]; // payload de POST/PUT
 };
 
@@ -205,9 +232,10 @@ export type BulkMultaRequest = {
 };
 
 export type BulkAporteRequest = {
-  socioIds: string[];
-  tipo: 'mensual' | 'unico' | 'anual';
-  montoBase: number;
+  socioIds?: string[]; // omitido en /bulk/all (se resuelven todos los permitidos)
+  tipo: 'mensual' | 'unico' | 'anual' | 'extraordinario';
+  monto?: number; // override, SOLO unico/extraordinario
+  montoBase?: number; // legacy del cliente; se deriva del tipo del socio por defecto
   gestion: number;
   mes?: number;
   meses?: number;
