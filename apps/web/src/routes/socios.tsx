@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useAppStore } from '../stores/app.store';
+import { useAppStore, selectTiposAporteActivos } from '../stores/app.store';
 import { Badge } from '@otb/ui';
 import type { Socio, Grupo } from '@otb/core';
 
@@ -18,7 +18,7 @@ const socioSchema = z.object({
   fechaNac: z.string().nullish().default(''),
   fechaIng: z.string().nullish().default(''),
   fechaAlta: z.string().nullish().default(''),
-  aporteBase: z.coerce.number().min(0).default(0),
+  tipoAporteId: z.string().nullish().default(''),
   estadoId: z.string().nullish().default(''),
   grupoPrimarioId: z.string().nullish().default(''),
   grupoAdicionalIds: z.array(z.string()).default([]),
@@ -30,7 +30,7 @@ const defaultSocio: SocioForm = {
   nombre: '', apellidoPaterno: '', apellidoMaterno: '',
   ci: '', telefono: '', email: '', ocupacion: '', direccion: '',
   fechaNac: '', fechaIng: '', fechaAlta: '',
-  aporteBase: 0,
+  tipoAporteId: '',
   estadoId: '', grupoPrimarioId: '', grupoAdicionalIds: [],
 };
 
@@ -74,7 +74,7 @@ function GrupoChips({ socio, grupos }: { socio: Socio; grupos: Grupo[] }) {
 export default function SociosPage() {
   const {
     socios, sociosLoading, sociosError, fetchSocios, createSocio, updateSocio, bajaSocio,
-    estadosSocio, grupos, fetchConfig,
+    estadosSocio, grupos, tiposAporte, fetchConfig,
   } = useAppStore();
   const [search, setSearch] = useState('');
   const [estadoFilter, setEstadoFilter] = useState('');
@@ -125,6 +125,7 @@ export default function SociosPage() {
   async function onSubmit(data: SocioForm) {
     const payload = {
       ...data,
+      tipoAporteId: data.tipoAporteId || undefined,
       estadoId: data.estadoId || editing?.estadoId || undefined,
       grupoPrimarioId: data.grupoPrimarioId || undefined,
       grupoAdicionalIds: data.grupoAdicionalIds ?? [],
@@ -250,7 +251,12 @@ export default function SociosPage() {
                   <td className="px-4 py-3">
                     <GrupoChips socio={s} grupos={grupos} />
                   </td>
-                  <td className="px-4 py-3">Bs {s.aporteBase.toFixed(2)}</td>
+                  <td className="px-4 py-3">
+                    <span className="font-medium">Bs {s.aporteBase.toFixed(2)}</span>
+                    {s.tipoAporteNombre && (
+                      <span className="ml-1 text-xs text-gray-400">({s.tipoAporteNombre})</span>
+                    )}
+                  </td>
                   <td className="flex flex-wrap gap-2 px-4 py-3">
                     <button
                       onClick={() => setFicha(s)}
@@ -300,7 +306,10 @@ export default function SociosPage() {
                 </div>
                 <div className="flex justify-between gap-2">
                   <dt className="text-gray-500">Aporte Base</dt>
-                  <dd>Bs {s.aporteBase.toFixed(2)}</dd>
+                  <dd>
+                    Bs {s.aporteBase.toFixed(2)}
+                    {s.tipoAporteNombre && <span className="ml-1 text-xs text-gray-400">({s.tipoAporteNombre})</span>}
+                  </dd>
                 </div>
               </dl>
               <div className="mt-2">
@@ -404,8 +413,13 @@ export default function SociosPage() {
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className={labelCls}>Aporte Base (Bs)</label>
-                  <input type="number" step="0.01" {...form.register('aporteBase')} className={inputCls} />
+                  <label className={labelCls}>Tipo de Aporte</label>
+                  <select {...form.register('tipoAporteId')} className={inputCls}>
+                    <option value="">(activo por defecto)</option>
+                    {selectTiposAporteActivos(tiposAporte).map((t) => (
+                      <option key={t.id} value={t.id}>● {t.nombre} — Bs {t.montoBase.toFixed(2)}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className={labelCls}>Estado</label>
@@ -493,7 +507,13 @@ export default function SociosPage() {
               <div className="flex justify-between gap-3"><dt className="text-gray-500">Fec. Nac.</dt><dd>{ficha.fechaNac || '—'}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-gray-500">Fec. Ingreso</dt><dd>{ficha.fechaIng || '—'}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-gray-500">Fec. Alta</dt><dd>{ficha.fechaAlta || '—'}</dd></div>
-              <div className="flex justify-between gap-3"><dt className="text-gray-500">Aporte Base</dt><dd>Bs {ficha.aporteBase.toFixed(2)}</dd></div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-gray-500">Aporte Base</dt>
+                <dd>
+                  Bs {ficha.aporteBase.toFixed(2)}
+                  {ficha.tipoAporteNombre && <span className="ml-1 text-xs text-gray-400">({ficha.tipoAporteNombre})</span>}
+                </dd>
+              </div>
             </dl>
 
             <div className="mt-3">
