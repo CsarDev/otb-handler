@@ -3,6 +3,9 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
+import { socioPermiteUI } from '../lib/permisos';
+import { Badge } from '@otb/ui';
+import type { Aporte } from '@otb/core';
 
 const pagarSchema = z.object({
   monto: z.coerce.number().min(0.01, 'Monto requerido'),
@@ -12,11 +15,23 @@ const pagarSchema = z.object({
 
 type PagarForm = z.infer<typeof pagarSchema>;
 
+/** Badge de estado del socio con color del catálogo (hex inline). */
+function SocioEstadoBadge({ aporte, socioById }: { aporte: Aporte; socioById: Map<string, { estadoColor: string | null; estadoNombre: string | null }> }) {
+  const socio = socioById.get(aporte.socioId);
+  if (!socio?.estadoNombre) return null;
+  return (
+    <Badge style={{ backgroundColor: socio.estadoColor ?? '#9ca3af', color: '#fff' }}>
+      {socio.estadoNombre}
+    </Badge>
+  );
+}
+
 export default function AportesPage() {
   const { aportes, aportesLoading, aportesError, fetchAportes, pagarAporte, anularAporte } = useAppStore();
   const { socios, fetchSocios } = useAppStore();
+  const { estadosSocio, accionesSocio, grupos, fetchConfig } = useAppStore();
   const [tab, setTab] = useState<'crear' | 'pagar'>('pagar');
-  const [filters, setFilters] = useState({ socioId: '', mes: '', gestion: '', estado: '', tipo: '', fechaDesde: '', fechaHasta: '' });
+  const [filters, setFilters] = useState({ socioId: '', mes: '', gestion: '', estado: '', tipo: '', fechaDesde: '', fechaHasta: '', estadoId: '', grupoId: '' });
   const [payingId, setPayingId] = useState<string | null>(null);
   const [voidingId, setVoidingId] = useState<string | null>(null);
   const [voidReason, setVoidReason] = useState('');
@@ -38,11 +53,12 @@ export default function AportesPage() {
 
   useEffect(() => {
     fetchSocios();
-  }, [fetchSocios]);
+    fetchConfig();
+  }, [fetchSocios, fetchConfig]);
 
   useEffect(() => {
     if (tab !== 'pagar') return;
-    const hasFilters = filters.socioId || filters.mes || filters.gestion || filters.estado || filters.tipo || filters.fechaDesde || filters.fechaHasta;
+    const hasFilters = filters.socioId || filters.mes || filters.gestion || filters.estado || filters.tipo || filters.fechaDesde || filters.fechaHasta || filters.estadoId || filters.grupoId;
     fetchAportes(hasFilters ? {
       socioId: filters.socioId || undefined,
       mes: filters.mes || undefined,
@@ -51,11 +67,17 @@ export default function AportesPage() {
       tipo: filters.tipo || undefined,
       fechaDesde: filters.fechaDesde || undefined,
       fechaHasta: filters.fechaHasta || undefined,
+      estadoId: filters.estadoId || undefined,
+      grupoId: filters.grupoId || undefined,
     } : undefined);
   }, [tab, filters, fetchAportes]);
 
   async function handleCreate() {
-    const selectedIds = allSocios ? socios.map((s) => s.id) : createSocios;
+    // Solo socios cuyo estado permite "aportes"
+    const seleccionables = socios.filter((s) =>
+      socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'aportes'),
+    );
+    const selectedIds = allSocios ? seleccionables.map((s) => s.id) : createSocios;
     if (selectedIds.length === 0) { alert('Seleccione al menos un socio'); return; }
     if (!createMonto || createMonto <= 0) { alert('Ingrese un monto válido'); return; }
 
@@ -106,8 +128,11 @@ export default function AportesPage() {
     setCreateSocios((prev) => prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]);
   }
 
-  const activeSocios = socios.filter((s) => s.estado === 'activo');
-  const selectedIds = allSocios ? socios.map((s) => s.id) : createSocios;
+  const permitidos = socios.filter((s) =>
+    socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'aportes'),
+  );
+  const selectedIds = allSocios ? permitidos.map((s) => s.id) : createSocios;
+  const socioById = new Map(socios.map((s) => [s.id, s]));
 
   const tabs = [
     { key: 'pagar' as const, label: 'Pagar Aportes' },
@@ -140,14 +165,14 @@ export default function AportesPage() {
           <h3 className="mb-4 text-lg font-bold text-gray-900">Crear Aportes</h3>
           <div className="space-y-4">
             <div>
-              <label className="mb-2 block text-xs font-medium text-gray-600">Socios</label>
+              <label className="mb-2 block text-xs font-medium text-gray-600">Socios (solo con permiso de "aportes")</label>
               <label className="mb-2 flex cursor-pointer items-center gap-2 text-sm text-blue-600 hover:text-blue-700">
                 <input type="checkbox" checked={allSocios} onChange={(e) => setAllSocios(e.target.checked)} className="rounded border-gray-300" />
-                Todos los socios activos ({activeSocios.length})
+                Todos los socios habilitados ({permitidos.length})
               </label>
               {!allSocios && (
                 <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 p-2">
-                  {socios.map((s) => (
+                  {permitidos.map((s) => (
                     <label key={s.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
                       <input type="checkbox" checked={createSocios.includes(s.id)} onChange={() => toggleSocio(s.id)} className="rounded border-gray-300" />
                       {s.nombre} {s.apellidoPaterno}
@@ -158,7 +183,7 @@ export default function AportesPage() {
               <p className="mt-1 text-xs text-gray-400">{selectedIds.length} socio(s) seleccionado(s)</p>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600">Tipo</label>
                 <select value={createTipo} onChange={(e) => setCreateTipo(e.target.value as typeof createTipo)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
@@ -177,7 +202,7 @@ export default function AportesPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {createTipo !== 'anual' && (
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">Mes</label>
@@ -211,6 +236,14 @@ export default function AportesPage() {
               <option value="">Todos los socios</option>
               {socios.map((s) => (<option key={s.id} value={s.id}>{s.nombre} {s.apellidoPaterno}</option>))}
             </select>
+            <select value={filters.estadoId} onChange={(e) => setFilters((f) => ({ ...f, estadoId: e.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+              <option value="">Todos los estados de socio</option>
+              {estadosSocio.map((e) => (<option key={e.id} value={e.id}>● {e.nombre}</option>))}
+            </select>
+            <select value={filters.grupoId} onChange={(e) => setFilters((f) => ({ ...f, grupoId: e.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+              <option value="">Todos los grupos</option>
+              {grupos.map((g) => (<option key={g.id} value={g.id}>{g.nombre}</option>))}
+            </select>
             <select value={filters.mes} onChange={(e) => setFilters((f) => ({ ...f, mes: e.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
               <option value="">Todos los meses</option>
               {Array.from({ length: 12 }, (_, i) => (<option key={i + 1} value={i + 1}>{i + 1}</option>))}
@@ -224,7 +257,7 @@ export default function AportesPage() {
               <option value="unico">Único</option>
             </select>
             <select value={filters.estado} onChange={(e) => setFilters((f) => ({ ...f, estado: e.target.value }))} className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-              <option value="">Todos los estados</option>
+              <option value="">Todos los estados de pago</option>
               <option value="pagado">Pagado</option>
               <option value="pendiente">Pendiente</option>
               <option value="anulado">Anulado</option>
@@ -240,8 +273,9 @@ export default function AportesPage() {
             <div className="rounded-xl border bg-white p-12 text-center"><p className="text-gray-500">No hay aportes registrados</p></div>
           )}
 
+          {/* Tabla sm+ */}
           {aportes.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+            <div className="hidden overflow-x-auto rounded-xl border bg-white shadow-sm sm:block">
               <table className="w-full text-left text-sm">
                 <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
                   <tr><th className="px-4 py-3">Socio</th><th className="px-4 py-3">Mes</th><th className="px-4 py-3">Gestión</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Monto</th><th className="px-4 py-3">Pagado</th><th className="px-4 py-3">Saldo</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Acciones</th></tr>
@@ -249,7 +283,12 @@ export default function AportesPage() {
                 <tbody className="divide-y">
                   {aportes.map((a) => (
                     <tr key={a.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3">{a.socioNombre ? `${a.socioNombre} ${a.socioApellido ?? ''}` : a.socioId}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{a.socioNombre ? `${a.socioNombre} ${a.socioApellido ?? ''}` : a.socioId}</span>
+                          <SocioEstadoBadge aporte={a} socioById={socioById} />
+                        </div>
+                      </td>
                       <td className="px-4 py-3">{a.mes}</td>
                       <td className="px-4 py-3">{a.gestion}</td>
                       <td className="px-4 py-3">{a.tipo}</td>
@@ -264,7 +303,7 @@ export default function AportesPage() {
                         }`}>{a.estado}</span>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                           {a.estado === 'pendiente' && (
                             <>
                               <button onClick={() => { setPayingId(a.id); payForm.setValue('monto', a.saldoPendiente ?? a.montoBase); }} className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50">Pagar</button>
@@ -278,6 +317,39 @@ export default function AportesPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Cards móvil ~360px */}
+          {aportes.length > 0 && (
+            <div className="space-y-3 sm:hidden">
+              {aportes.map((a) => (
+                <div key={a.id} className="rounded-xl border bg-white p-4 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium text-gray-900">{a.socioNombre ? `${a.socioNombre} ${a.socioApellido ?? ''}` : a.socioId}</span>
+                    <SocioEstadoBadge aporte={a} socioById={socioById} />
+                  </div>
+                  <dl className="mt-2 space-y-1 text-sm">
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Mes / Gestión</dt><dd>{a.mes} / {a.gestion}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Tipo</dt><dd>{a.tipo}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Monto</dt><dd>Bs {a.montoBase.toFixed(2)}</dd></div>
+                    <div className="flex justify-between gap-2"><dt className="text-gray-500">Saldo</dt><dd>Bs {(a.saldoPendiente ?? a.montoBase).toFixed(2)}</dd></div>
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-gray-500">Estado</dt>
+                      <dd><span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${a.estado === 'pagado' ? 'bg-green-100 text-green-700' : a.estado === 'anulado' ? 'bg-gray-100 text-gray-500' : 'bg-yellow-100 text-yellow-700'}`}>{a.estado}</span></dd>
+                    </div>
+                  </dl>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {a.estado === 'pendiente' && (
+                      <>
+                        <button onClick={() => { setPayingId(a.id); payForm.setValue('monto', a.saldoPendiente ?? a.montoBase); }} className="rounded px-2 py-1 text-xs font-medium text-green-600 hover:bg-green-50">Pagar</button>
+                        <button onClick={() => { setVoidingId(a.id); setVoidReason(''); }} className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50">Anular</button>
+                      </>
+                    )}
+                    {a.estado === 'pagado' && a.fechaPago && <span className="text-xs text-gray-400">Pagado: {a.fechaPago}</span>}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </>

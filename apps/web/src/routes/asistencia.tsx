@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../stores/app.store';
+import { socioPermiteUI } from '../lib/permisos';
 
 const TIPOS_ASISTENCIA = [
   { value: 'asistio', label: 'Presente', class: 'text-green-700 bg-green-50 border-green-300' },
@@ -12,8 +13,11 @@ export default function AsistenciaPage() {
   const initialActividadId = undefined;
   const { actividades, actividadesLoading: actsLoading, fetchActividades } = useAppStore();
   const { socios, sociosLoading: sociosLoading_, fetchSocios } = useAppStore();
+  const { estadosSocio, accionesSocio, grupos, fetchConfig } = useAppStore();
   const { asistenciaRecords, asistenciaLoading, asistenciaError, fetchAsistencia, saveAsistencia } = useAppStore();
   const [selectedActividadId, setSelectedActividadId] = useState<string | undefined>(initialActividadId);
+  const [estadoFilter, setEstadoFilter] = useState('');
+  const [grupoFilter, setGrupoFilter] = useState('');
   const [registros, setRegistros] = useState<Record<string, { tipoAsistencia: string; minutosTardanza: number }>>({});
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -21,13 +25,19 @@ export default function AsistenciaPage() {
   useEffect(() => {
     fetchActividades();
     fetchSocios();
-  }, [fetchActividades, fetchSocios]);
+    fetchConfig();
+  }, [fetchActividades, fetchSocios, fetchConfig]);
 
   useEffect(() => {
     if (selectedActividadId) {
-      fetchAsistencia(selectedActividadId);
+      fetchAsistencia(selectedActividadId, estadoFilter || undefined, grupoFilter || undefined);
     }
-  }, [selectedActividadId, fetchAsistencia]);
+  }, [selectedActividadId, estadoFilter, grupoFilter, fetchAsistencia]);
+
+  // Socios habilitados: su estado permite la acción "asistencia"
+  const activosPermitidos = socios.filter((s) =>
+    socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'asistencia'),
+  );
 
   useEffect(() => {
     if (asistenciaRecords.length > 0 && selectedActividadId) {
@@ -36,16 +46,15 @@ export default function AsistenciaPage() {
         map[r.socioId] = { tipoAsistencia: r.tipoAsistencia, minutosTardanza: r.minutosTardanza ?? 0 };
       }
       setRegistros(map);
-    } else if (selectedActividadId && socios.length > 0) {
+    } else if (selectedActividadId && activosPermitidos.length > 0) {
       const map: Record<string, { tipoAsistencia: string; minutosTardanza: number }> = {};
-      for (const s of socios) {
-        if (s.estado === 'activo') {
-          map[s.id] = { tipoAsistencia: 'asistio', minutosTardanza: 0 };
-        }
+      for (const s of activosPermitidos) {
+        map[s.id] = { tipoAsistencia: 'asistio', minutosTardanza: 0 };
       }
       setRegistros(map);
     }
-  }, [asistenciaRecords, selectedActividadId, socios]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asistenciaRecords, selectedActividadId, socios, estadosSocio, accionesSocio]);
 
   async function handleSave() {
     if (!selectedActividadId) return;
@@ -79,13 +88,11 @@ export default function AsistenciaPage() {
     }));
   }
 
-  const activeSocios = socios.filter((s) => s.estado === 'activo');
-
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h2 className="text-2xl font-bold text-gray-900">Asistencia</h2>
-        {selectedActividadId && activeSocios.length > 0 && (
+        {selectedActividadId && activosPermitidos.length > 0 && (
           <button
             onClick={handleSave}
             disabled={saving}
@@ -102,20 +109,48 @@ export default function AsistenciaPage() {
         </div>
       )}
 
-      <div className="mb-6">
-        <label className="mb-1 block text-sm font-medium text-gray-600">Seleccionar Actividad</label>
-        <select
-          value={selectedActividadId ?? ''}
-          onChange={(e) => setSelectedActividadId(e.target.value || undefined)}
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none sm:w-80"
-        >
-          <option value="">Seleccionar actividad...</option>
-          {actividades.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.fecha}{a.descripcion ? ` - ${a.descripcion}` : ''}
-            </option>
-          ))}
-        </select>
+      <div className="mb-6 flex flex-wrap gap-3">
+        <div className="w-full sm:w-80">
+          <label className="mb-1 block text-sm font-medium text-gray-600">Seleccionar Actividad</label>
+          <select
+            value={selectedActividadId ?? ''}
+            onChange={(e) => setSelectedActividadId(e.target.value || undefined)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          >
+            <option value="">Seleccionar actividad...</option>
+            {actividades.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.fecha}{a.descripcion ? ` - ${a.descripcion}` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="w-full sm:w-auto">
+          <label className="mb-1 block text-sm font-medium text-gray-600">Estado</label>
+          <select
+            value={estadoFilter}
+            onChange={(e) => setEstadoFilter(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          >
+            <option value="">Todos los estados</option>
+            {estadosSocio.map((e) => (
+              <option key={e.id} value={e.id}>● {e.nombre}</option>
+            ))}
+          </select>
+        </div>
+        <div className="w-full sm:w-auto">
+          <label className="mb-1 block text-sm font-medium text-gray-600">Grupo</label>
+          <select
+            value={grupoFilter}
+            onChange={(e) => setGrupoFilter(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          >
+            <option value="">Todos los grupos</option>
+            {grupos.map((g) => (
+              <option key={g.id} value={g.id}>{g.nombre}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {asistenciaLoading && <p className="text-gray-500">Cargando...</p>}
@@ -127,13 +162,13 @@ export default function AsistenciaPage() {
         </div>
       )}
 
-      {selectedActividadId && activeSocios.length === 0 && !asistenciaLoading && (
+      {selectedActividadId && activosPermitidos.length === 0 && !asistenciaLoading && (
         <div className="rounded-xl border bg-white p-12 text-center">
-          <p className="text-gray-500">No hay socios activos para registrar asistencia</p>
+          <p className="text-gray-500">No hay socios habilitados para registrar asistencia</p>
         </div>
       )}
 
-      {selectedActividadId && activeSocios.length > 0 && (
+      {selectedActividadId && activosPermitidos.length > 0 && (
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
           <table className="w-full text-left text-sm">
             <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
@@ -146,7 +181,7 @@ export default function AsistenciaPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {activeSocios.map((s) => {
+              {activosPermitidos.map((s) => {
                 const reg = registros[s.id];
                 return (
                   <tr key={s.id} className="hover:bg-gray-50">
