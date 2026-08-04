@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 import { Badge } from '@otb/ui';
-import type { TipoActividad, EstadoSocio, Grupo } from '@otb/core';
+import type { TipoActividad, EstadoSocio, Grupo, TipoAporte } from '@otb/core';
 
 const configSchema = z.object({
   nombreOTB: z.string().min(1, 'Requerido'),
@@ -27,6 +27,22 @@ const tipoSchema = z.object({
 });
 
 type TipoForm = z.infer<typeof tipoSchema>;
+
+const tipoAporteSchema = z.object({
+  nombre: z.string().min(1, 'Requerido'),
+  montoBase: z.coerce.number().min(0, 'Debe ser >= 0'),
+  descripcion: z.string().default(''),
+  activo: z.boolean().default(true),
+});
+
+type TipoAporteForm = z.infer<typeof tipoAporteSchema>;
+
+const defaultTipoAporteForm: TipoAporteForm = {
+  nombre: '',
+  montoBase: 0,
+  descripcion: '',
+  activo: true,
+};
 
 const opcionesDisponibles = ['asistio', 'falta', 'tardanza', 'justificado'];
 
@@ -98,6 +114,7 @@ export default function ConfigPage() {
     config, configLoading, configError,
     fetchConfig, updateConfig,
     tiposActividad, addTipoActividad, updateTipoActividad, removeTipoActividad,
+    tiposAporte, addTipoAporte, updateTipoAporte, removeTipoAporte,
     estadosSocio, accionesSocio, grupos,
     addEstadoSocio, updateEstadoSocio, removeEstadoSocio, setEstadoAcciones,
     addAccionSocio, removeAccionSocio,
@@ -139,6 +156,20 @@ export default function ConfigPage() {
   const tipoForm = useForm<TipoForm>({
     resolver: zodResolver(tipoSchema) as any,
     defaultValues: { nombre: '', tolerancia: 15 },
+  });
+
+  // Tipos de Aporte
+  const [showTipoAporteForm, setShowTipoAporteForm] = useState(false);
+  const [editingTipoAporte, setEditingTipoAporte] = useState<TipoAporte | null>(null);
+
+  const tipoAporteForm = useForm<TipoAporteForm>({
+    resolver: zodResolver(tipoAporteSchema) as any,
+    defaultValues: defaultTipoAporteForm,
+  });
+
+  const editTipoAporteForm = useForm<TipoAporteForm>({
+    resolver: zodResolver(tipoAporteSchema) as any,
+    defaultValues: defaultTipoAporteForm,
   });
 
   useEffect(() => {
@@ -204,6 +235,66 @@ export default function ConfigPage() {
   async function handleRemoveTipo(id: string, nombre: string) {
     if (confirm(`¿Eliminar el tipo "${nombre}"?`)) {
       await removeTipoActividad(id);
+    }
+  }
+
+  /* ── Tipos de Aporte ──────────────────────────────────────────── */
+
+  async function handleAddTipoAporte(data: TipoAporteForm) {
+    if (tiposAporte.some((t) => t.nombre === data.nombre.trim())) {
+      alert('Ya existe un tipo con ese nombre');
+      return;
+    }
+    try {
+      await addTipoAporte({
+        nombre: data.nombre.trim(),
+        montoBase: data.montoBase,
+        descripcion: data.descripcion?.trim() || null,
+        activo: data.activo ? 1 : 0,
+      });
+      setShowTipoAporteForm(false);
+      tipoAporteForm.reset(defaultTipoAporteForm);
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  function handleOpenEditTipoAporte(tipo: TipoAporte) {
+    setEditingTipoAporte(tipo);
+    editTipoAporteForm.reset({
+      nombre: tipo.nombre,
+      montoBase: tipo.montoBase,
+      descripcion: tipo.descripcion ?? '',
+      activo: tipo.activo === 1,
+    });
+  }
+
+  async function handleSaveEditTipoAporte() {
+    if (!editingTipoAporte) return;
+    const data = editTipoAporteForm.getValues();
+    try {
+      await updateTipoAporte(editingTipoAporte.id, {
+        nombre: data.nombre.trim(),
+        montoBase: data.montoBase,
+        descripcion: data.descripcion?.trim() || null,
+        activo: data.activo ? 1 : 0,
+      });
+      setEditingTipoAporte(null);
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  async function handleRemoveTipoAporte(id: string, nombre: string) {
+    if (!confirm(`¿Eliminar el tipo "${nombre}"?`)) return;
+    try {
+      await removeTipoAporte(id);
+    } catch (e) {
+      if ((e as { status?: number }).status === 409) {
+        alert('No se puede eliminar: hay socios usando este tipo');
+      } else {
+        alert((e as Error).message);
+      }
     }
   }
 
@@ -502,6 +593,92 @@ export default function ConfigPage() {
             <button type="button" onClick={() => setShowTipoForm(false)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
               Cancelar
             </button>
+          </form>
+        )}
+      </div>
+
+      {/* ── Tipos de Aporte ── */}
+      <div className="rounded-xl border bg-white p-6 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold text-gray-900">Tipos de Aporte</h3>
+          <button
+            onClick={() => setShowTipoAporteForm(true)}
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+          >
+            + Nuevo Tipo
+          </button>
+        </div>
+
+        {tiposAporte.length === 0 && (
+          <p className="text-sm text-gray-500">No hay tipos de aporte configurados</p>
+        )}
+
+        <div className="space-y-2">
+          {tiposAporte.map((t) => (
+            <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-gray-50 px-4 py-2.5">
+              <div className="min-w-0 flex-1">
+                <span className="text-sm font-medium text-gray-900">{t.nombre}</span>
+                <span className="ml-3 text-xs text-gray-500">Bs {t.montoBase.toFixed(2)}</span>
+                {t.activo === 1 && <Badge variant="green">activo</Badge>}
+                {t.descripcion && <span className="ml-3 text-xs text-gray-400">{t.descripcion}</span>}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleOpenEditTipoAporte(t)}
+                  className="rounded px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
+                >
+                  Editar
+                </button>
+                <button
+                  onClick={() => handleRemoveTipoAporte(t.id, t.nombre)}
+                  className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                >
+                  Eliminar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {showTipoAporteForm && (
+          <form
+            onSubmit={tipoAporteForm.handleSubmit(handleAddTipoAporte)}
+            className="mt-4 space-y-3 rounded-lg border bg-gray-50 p-4"
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className={labelCls}>Nombre *</label>
+                <input {...tipoAporteForm.register('nombre')} className={inputCls} />
+                {tipoAporteForm.formState.errors.nombre && <p className="text-xs text-red-500">{tipoAporteForm.formState.errors.nombre.message}</p>}
+              </div>
+              <div>
+                <label className={labelCls}>Monto Base (Bs) *</label>
+                <input type="number" step="0.01" min="0" {...tipoAporteForm.register('montoBase')} className={inputCls} />
+                {tipoAporteForm.formState.errors.montoBase && <p className="text-xs text-red-500">{tipoAporteForm.formState.errors.montoBase.message}</p>}
+              </div>
+            </div>
+            <div>
+              <label className={labelCls}>Descripción (opcional)</label>
+              <input {...tipoAporteForm.register('descripcion')} className={inputCls} />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                <Switch
+                  checked={tipoAporteForm.watch('activo')}
+                  label="tipo de aporte activo"
+                  onChange={() => tipoAporteForm.setValue('activo', !tipoAporteForm.watch('activo'))}
+                />
+                activo
+              </label>
+              <div className="flex gap-2">
+                <button type="submit" className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700">
+                  Agregar
+                </button>
+                <button type="button" onClick={() => setShowTipoAporteForm(false)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                  Cancelar
+                </button>
+              </div>
+            </div>
           </form>
         )}
       </div>
@@ -900,6 +1077,57 @@ export default function ConfigPage() {
                 className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
               >
                 {editingGrupo ? 'Guardar' : 'Crear'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Editar Tipo de Aporte ── */}
+      {editingTipoAporte && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-bold text-gray-900">
+              Editar tipo: {editingTipoAporte.nombre}
+            </h3>
+
+            <div className="space-y-3">
+              <div>
+                <label className={labelCls}>Nombre *</label>
+                <input {...editTipoAporteForm.register('nombre')} className={inputCls} />
+                {editTipoAporteForm.formState.errors.nombre && <p className="text-xs text-red-500">{editTipoAporteForm.formState.errors.nombre.message}</p>}
+              </div>
+              <div>
+                <label className={labelCls}>Monto Base (Bs) *</label>
+                <input type="number" step="0.01" min="0" {...editTipoAporteForm.register('montoBase')} className={inputCls} />
+                {editTipoAporteForm.formState.errors.montoBase && <p className="text-xs text-red-500">{editTipoAporteForm.formState.errors.montoBase.message}</p>}
+              </div>
+              <div>
+                <label className={labelCls}>Descripción (opcional)</label>
+                <input {...editTipoAporteForm.register('descripcion')} className={inputCls} />
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                <Switch
+                  checked={editTipoAporteForm.watch('activo')}
+                  label="tipo de aporte activo"
+                  onChange={() => editTipoAporteForm.setValue('activo', !editTipoAporteForm.watch('activo'))}
+                />
+                activo
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4">
+              <button
+                onClick={() => setEditingTipoAporte(null)}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveEditTipoAporte}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Guardar Cambios
               </button>
             </div>
           </div>
