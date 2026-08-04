@@ -6,6 +6,95 @@ import { resolverMonto } from '../lib/tipos-aporte';
 
 const aportes = new Hono();
 
+type SocioElegible = { id: string; estadoId: string | null; tipoAporteId: string | null };
+type AporteCreado = { id: string; socioId: string; mes: number | undefined; gestion: number; tipo: string; montoBase: number };
+type TxAportes = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * D6: genera los registros de aporte para la lista de socios permitidos dentro
+ * de la transacción abierta. Compartido por POST /bulk y POST /bulk/all para
+ * garantizar exactamente el mismo patrón de creación (anual→12, mensual→N,
+ * unico/extra→1) y la misma regla de override (D4).
+ */
+function generarAportes(
+  tx: TxAportes,
+  socios: SocioElegible[],
+  tipo: string,
+  gestion: number,
+  mesInicial: number,
+  meses: number,
+  override: number | undefined,
+): AporteCreado[] {
+  const items: AporteCreado[] = [];
+
+  for (const socio of socios) {
+    // D6/D4: monto derivado del tipo del socio; override SOLO unico/extraordinario.
+    // mensual/anual SIEMPRE derivan (un `monto` del cliente se ignora).
+    const montoBase = resolverMonto(socio, tipo, override);
+
+    if (tipo === 'anual') {
+      // FIX bug absorvido: anual SIEMPRE 12 registros (enero-diciembre),
+      // IGNORANDO body.meses (antes generaba body.meses registros).
+      for (let m = 1; m <= 12; m++) {
+        const id = crypto.randomUUID();
+        tx.insert(schema.aportes)
+          .values({
+            id,
+            socioId: socio.id,
+            mes: m,
+            gestion,
+            tipo,
+            montoBase,
+            montoPagado: 0,
+            saldoPendiente: montoBase,
+            estado: 'pendiente',
+          })
+          .run();
+        items.push({ id, socioId: socio.id, mes: m, gestion, tipo, montoBase });
+      }
+    } else if (tipo === 'mensual') {
+      // mensual = N registros desde el mes inicial (body.meses, default 1)
+      for (let i = 0; i < meses; i++) {
+        const id = crypto.randomUUID();
+        const mes = mesInicial + i;
+        tx.insert(schema.aportes)
+          .values({
+            id,
+            socioId: socio.id,
+            mes,
+            gestion,
+            tipo,
+            montoBase,
+            montoPagado: 0,
+            saldoPendiente: montoBase,
+            estado: 'pendiente',
+          })
+          .run();
+        items.push({ id, socioId: socio.id, mes, gestion, tipo, montoBase });
+      }
+    } else {
+      // unico / extraordinario → 1 registro
+      const id = crypto.randomUUID();
+      tx.insert(schema.aportes)
+        .values({
+          id,
+          socioId: socio.id,
+          mes: mesInicial,
+          gestion,
+          tipo,
+          montoBase,
+          montoPagado: 0,
+          saldoPendiente: montoBase,
+          estado: 'pendiente',
+        })
+        .run();
+      items.push({ id, socioId: socio.id, mes: mesInicial, gestion, tipo, montoBase });
+    }
+  }
+
+  return items;
+}
+
 aportes.get('/', (c) => {
   const { socioId, mes, gestion, estado, tipo, fechaDesde, fechaHasta, estadoId, grupoId } = c.req.query();
   const filters: any[] = [];
@@ -72,74 +161,40 @@ aportes.post('/bulk', async (c) => {
   }
 
   const created = db.transaction((tx) => {
-    const items: Array<{ id: string; socioId: string; mes: number | undefined; gestion: number; tipo: string; montoBase: number }> = [];
+    return generarAportes(tx, permitidos, tipo, gestion, mesInicial, meses, override);
+  });
 
-    for (const socio of permitidos) {
-      // D6/D4: monto derivado del tipo del socio; override SOLO unico/extraordinario.
-      // mensual/anual SIEMPRE derivan (un `monto` del cliente se ignora).
-      const montoBase = resolverMonto(socio, tipo, override);
+  return c.json({ count: created.length, items: created }, 201);
+});
 
-      if (tipo === 'anual') {
-        // FIX bug absorvido: anual SIEMPRE 12 registros (enero-diciembre),
-        // IGNORANDO body.meses (antes generaba body.meses registros).
-        for (let m = 1; m <= 12; m++) {
-          const id = crypto.randomUUID();
-          tx.insert(schema.aportes)
-            .values({
-              id,
-              socioId: socio.id,
-              mes: m,
-              gestion,
-              tipo,
-              montoBase,
-              montoPagado: 0,
-              saldoPendiente: montoBase,
-              estado: 'pendiente',
-            })
-            .run();
-          items.push({ id, socioId: socio.id, mes: m, gestion, tipo, montoBase });
-        }
-      } else if (tipo === 'mensual') {
-        // mensual = N registros desde el mes inicial (body.meses, default 1)
-        for (let i = 0; i < meses; i++) {
-          const id = crypto.randomUUID();
-          const mes = mesInicial + i;
-          tx.insert(schema.aportes)
-            .values({
-              id,
-              socioId: socio.id,
-              mes,
-              gestion,
-              tipo,
-              montoBase,
-              montoPagado: 0,
-              saldoPendiente: montoBase,
-              estado: 'pendiente',
-            })
-            .run();
-          items.push({ id, socioId: socio.id, mes, gestion, tipo, montoBase });
-        }
-      } else {
-        // unico / extraordinario → 1 registro
-        const id = crypto.randomUUID();
-        tx.insert(schema.aportes)
-          .values({
-            id,
-            socioId: socio.id,
-            mes: mesInicial,
-            gestion,
-            tipo,
-            montoBase,
-            montoPagado: 0,
-            saldoPendiente: montoBase,
-            estado: 'pendiente',
-          })
-          .run();
-        items.push({ id, socioId: socio.id, mes: mesInicial, gestion, tipo, montoBase });
-      }
-    }
+aportes.post('/bulk/all', async (c) => {
+  const body = await c.req.json();
 
-    return items;
+  const tipo = body.tipo ?? 'mensual';
+  const gestion = Number(body.gestion ?? new Date().getFullYear());
+  const mesInicial = body.mes ? Number(body.mes) : new Date().getMonth() + 1;
+  const meses = body.meses ? Number(body.meses) : 1;
+  const override = body.monto !== undefined ? Number(body.monto) : undefined;
+
+  // Enforcement por estado (D5): NO hardcode `estado='activo'`, se resuelven
+  // TODOS los socios cuyo estado permite la acción 'aportes'.
+  const permisos = cargarPermisosPorEstado();
+  const todos = db
+    .select({
+      id: schema.socios.id,
+      estadoId: schema.socios.estadoId,
+      tipoAporteId: schema.socios.tipoAporteId,
+    })
+    .from(schema.socios)
+    .all();
+  const permitidos = todos.filter((s) => permite(permisos, s.estadoId, 'aportes'));
+
+  if (permitidos.length === 0) {
+    return c.json({ error: 'Ningún socio puede participar en esta acción en su estado actual' }, 400);
+  }
+
+  const created = db.transaction((tx) => {
+    return generarAportes(tx, permitidos, tipo, gestion, mesInicial, meses, override);
   });
 
   return c.json({ count: created.length, items: created }, 201);
@@ -154,6 +209,33 @@ aportes.get('/socio/:socioId', (c) => {
     .all();
 
   return c.json(list);
+});
+
+aportes.get('/:id/pagos', (c) => {
+  const { id } = c.req.param();
+
+  const aporte = db
+    .select({ id: schema.aportes.id })
+    .from(schema.aportes)
+    .where(eq(schema.aportes.id, id))
+    .get();
+
+  if (!aporte) return c.json({ error: 'Aporte not found' }, 404);
+
+  // Historial de movimientos del aporte: solo ingresos (patrón multas.get('/:id/pagos'))
+  const pagos = db
+    .select()
+    .from(schema.movimientos)
+    .where(
+      and(
+        eq(schema.movimientos.referenciaId, id),
+        eq(schema.movimientos.tipo, 'ingreso'),
+      ),
+    )
+    .orderBy(schema.movimientos.fecha)
+    .all();
+
+  return c.json(pagos);
 });
 
 aportes.post('/', async (c) => {
