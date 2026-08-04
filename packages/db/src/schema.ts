@@ -1,5 +1,6 @@
 export * from './schema/socios';
-export * from './schema/tipos-aporte';
+export * from './schema/aportes-definicion';
+export * from './schema/socio-aportes';
 export * from './schema/tipos-actividad';
 export * from './schema/actividades';
 export * from './schema/asistencia';

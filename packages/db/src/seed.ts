@@ -6,14 +6,14 @@ import {
   ACCIONES_CATALOGO,
   ESTADOS_CATALOGO,
   ESTADO_ACCIONES_CATALOGO,
-  TIPOS_APORTE_CATALOGO,
+  APORTES_DEFINICION_SEED,
   idEstadoPorNombre,
-  idTipoAportePorMonto,
+  idAportePorMonto,
 } from './catalogo';
 
 const {
   tiposActividad,
-  tiposAporte,
+  aportesDefinicion,
   socios,
   actividades,
   asistencia,
@@ -29,6 +29,7 @@ const {
   estadoAcciones,
   grupos,
   socioGrupos,
+  socioAportes,
 } = schema;
 
 const dbUrl = process.env.DB_URL ?? './otb.db';
@@ -433,13 +434,13 @@ function genAsistencia(socioIdx: number, actIdx: number): { tipo: string; minTar
   return { tipo: 'asistio', minTardanza: 0 };
 }
 
-// Monto derivado del tipo asignado (misma fuente de verdad que la API): el
-// seed genera los aportes con el `montoBase` del tipo del socio, no con el
-// `aporte_base` legacy (que puede no coincidir con ningún montoBase del
-// catálogo — p.ej. 20/35 caen al tipo por defecto ta-pleno=50).
-function montoAportePorSocio(s: { aporteBase: number }): number {
-  const tipo = TIPOS_APORTE_CATALOGO.find((t) => t.id === idTipoAportePorMonto(s.aporteBase));
-  return tipo?.montoBase ?? s.aporteBase;
+// Monto derivado de la DEFINICIÓN asignada (misma fuente de verdad que la API):
+// el seed genera los aportes con el `monto` de la definición del socio, no con
+// el `aporte_base` legacy (que puede no coincidir con ningún monto — p.ej.
+// 20/35 caen a la definición por defecto ap-mensual=50).
+function definicionAportePorSocio(s: { aporteBase: number }) {
+  const def = APORTES_DEFINICION_SEED.find((d) => d.id === idAportePorMonto(s.aporteBase));
+  return def ?? APORTES_DEFINICION_SEED[0];
 }
 
 function genAportes() {
@@ -454,13 +455,15 @@ function genAportes() {
         const fechaPago = pago
           ? fecha(new Date(g, m - 1, Math.floor(Math.random() * 20) + 5))
           : null;
-        const montoBase = montoAportePorSocio(s);
+        const def = definicionAportePorSocio(s);
+        const montoBase = def.monto;
         data.push({
           id: id(),
           socioId: SOCIO_IDS[sociosData.indexOf(s)],
+          aporteId: def.id,
           mes: m,
           gestion: g,
-          tipo: 'mensual',
+          tipo: def.recurrencia,
           montoBase,
           montoPagado: pago ? montoBase : 0,
           saldoPendiente: pago ? 0 : montoBase,
@@ -676,19 +679,20 @@ async function main() {
     'custom_field_definitions',
     'modules_config',
     'estado_acciones',
+    'socio_aportes',
     'socio_grupos',
     'movimientos',
     'multas',
     'egresos',
     'asistencia',
     'aportes',
+    'aportes_definicion',
     'actividades',
     'socios',
     'grupos',
     'estados_socio',
     'acciones_socio',
     'tipos_actividad',
-    'tipos_aporte',
   ];
 
   for (const t of tables) {
@@ -698,8 +702,8 @@ async function main() {
   db.insert(tiposActividad).values(tiposActividadData).run();
   console.log(`  ${tiposActividadData.length} tipos de actividad`);
 
-  db.insert(tiposAporte).values(TIPOS_APORTE_CATALOGO).run();
-  console.log(`  ${TIPOS_APORTE_CATALOGO.length} tipos de aporte`);
+  db.insert(aportesDefinicion).values(APORTES_DEFINICION_SEED).run();
+  console.log(`  ${APORTES_DEFINICION_SEED.length} definiciones de aporte`);
 
   db.insert(accionesSocio).values(ACCIONES_CATALOGO).run();
   console.log(`  ${ACCIONES_CATALOGO.length} acciones de socio`);
@@ -713,16 +717,25 @@ async function main() {
   db.insert(grupos).values(gruposData).run();
   console.log(`  ${gruposData.length} grupos`);
 
-  // Asignación de tipo de aporte por monto (mismo mapeo que el backfill de la
-  // migración 0004): aporte_base que coincide con un montoBase → ese tipo,
-  // si no → tipo activo por defecto (ta-pleno).
-  const sociosValues = sociosData.map((s, i) => ({
-    ...s,
-    id: SOCIO_IDS[i],
-    tipoAporteId: idTipoAportePorMonto(s.aporteBase),
-  }));
+  // Asignación de definición de aporte por monto (mismo mapeo que el backfill
+  // de la migración 0005): aporte_base que coincide con un monto de definición
+  // → esa definición; si no → la definición activa por defecto (ap-mensual).
+  const sociosValues = sociosData.map((s, i) => {
+    const { aporteBase, ...rest } = s;
+    return { ...rest, id: SOCIO_IDS[i] };
+  });
   db.insert(socios).values(sociosValues).run();
   console.log(`  ${sociosValues.length} socios`);
+
+  // socio_aportes: one row por socio con la definición asignada (mismo set que
+  // el backfill de 0005). La asignación es independiente del estado: el estado
+  // solo gatea la GENERACIÓN de registros, no la asignación.
+  const socioAportesData = sociosData.map((s, i) => ({
+    socioId: SOCIO_IDS[i],
+    aporteId: idAportePorMonto(s.aporteBase),
+  }));
+  db.insert(socioAportes).values(socioAportesData).run();
+  console.log(`  ${socioAportesData.length} asignaciones socio-aporte`);
 
   db.insert(actividades).values(actividadesData).run();
   console.log(`  ${actividadesData.length} actividades`);

@@ -84,28 +84,83 @@ export const ESTADO_ACCIONES_CATALOGO: { estadoId: string; accionId: string }[] 
   { estadoId: 'est-suspendido', accionId: 'acc-reportes' },
 ];
 
-export type TipoAporteCatalogo = {
+export type AporteDefinicionCatalogo = {
   id: string;
   nombre: string;
-  montoBase: number; // cuota mensual por registro de aporte
-  descripcion: string | null;
+  monto: number; // Bs, por registro
+  recurrencia: string; // 'mensual' | 'anual' | 'unico' | 'extraordinario'
+  inicio: string | null; // YYYY-MM-DD
+  fin: string | null; // YYYY-MM-DD
+  modalidadPago: string; // 'cuotas' | 'parciales' | 'pago_unico'
+  aplicaGrupoId: string | null; // null = global
   activo: number; // 0|1
 };
 
-// 4 tipos de aporte por defecto. Ids estables compartidos por seed.ts y la
-// migración SQL (0004), para que el backfill por monto mapee a las mismas filas.
-// `ta-pleno` es el tipo activo por defecto (fallback del backfill).
-export const TIPOS_APORTE_CATALOGO: TipoAporteCatalogo[] = [
-  { id: 'ta-pleno', nombre: 'Socio Pleno', montoBase: 50, descripcion: 'Cuota plena mensual', activo: 1 },
-  { id: 'ta-familiar', nombre: 'Familiar', montoBase: 30, descripcion: 'Cuota familiar', activo: 1 },
-  { id: 'ta-jubilado', nombre: 'Jubilado', montoBase: 25, descripcion: 'Cuota jubilados', activo: 1 },
-  { id: 'ta-honorario', nombre: 'Honorario', montoBase: 0, descripcion: 'Cuota simbólica (0)', activo: 1 },
+// 4 definiciones de aporte por defecto. Ids estables compartidos por seed.ts y
+// la migración SQL (0005), para que el backfill de socio_aportes mapee a las
+// mismas filas. `ap-mensual` es la definición activa por defecto.
+export const APORTES_DEFINICION_SEED: AporteDefinicionCatalogo[] = [
+  {
+    id: 'ap-mensual',
+    nombre: 'Cuota Social Mensual',
+    monto: 50,
+    recurrencia: 'mensual',
+    inicio: null,
+    fin: null,
+    modalidadPago: 'cuotas',
+    aplicaGrupoId: null,
+    activo: 1,
+  },
+  {
+    id: 'ap-familiar',
+    nombre: 'Aporte Familiar',
+    monto: 30,
+    recurrencia: 'mensual',
+    inicio: null,
+    fin: null,
+    modalidadPago: 'cuotas',
+    aplicaGrupoId: null,
+    activo: 1,
+  },
+  {
+    id: 'ap-jubilado',
+    nombre: 'Aporte Jubilado',
+    monto: 25,
+    recurrencia: 'mensual',
+    inicio: null,
+    fin: null,
+    modalidadPago: 'cuotas',
+    aplicaGrupoId: null,
+    activo: 1,
+  },
+  {
+    id: 'ap-honorario',
+    nombre: 'Aporte Honorario',
+    monto: 0,
+    recurrencia: 'mensual',
+    inicio: null,
+    fin: null,
+    modalidadPago: 'cuotas',
+    aplicaGrupoId: null,
+    activo: 1,
+  },
 ];
 
-export function idTipoAportePorMonto(montoBase: number): string {
-  const tipo = TIPOS_APORTE_CATALOGO.find((t) => t.montoBase === montoBase);
-  // Fallback al tipo activo por defecto si el monto no coincide con ninguno
-  return tipo?.id ?? TIPOS_APORTE_CATALOGO[0].id;
+// Mapeo de los ids legacy (`ta-*`) a las definiciones (`ap-*`) para el backfill
+// de la migración 0005 y el seed.
+export const APORTE_ID_POR_TIPO: Record<string, string> = {
+  'ta-pleno': 'ap-mensual',
+  'ta-familiar': 'ap-familiar',
+  'ta-jubilado': 'ap-jubilado',
+  'ta-honorario': 'ap-honorario',
+};
+
+// Id de la definición por monto (misma semántica que el viejo
+// `idTipoAportePorMonto`): monto que coincide con una definición → esa; si no
+// → la definición activa por defecto (`ap-mensual`).
+export function idAportePorMonto(monto: number): string {
+  const def = APORTES_DEFINICION_SEED.find((d) => d.monto === monto);
+  return def?.id ?? APORTES_DEFINICION_SEED[0].id;
 }
 
 export function idEstadoPorNombre(nombre: string): string {
