@@ -39,6 +39,16 @@ export default function AsistenciaPage() {
     socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'asistencia'),
   );
 
+  // Roster visible: los filtros estado/grupo aplican TAMBIÉN al roster, no solo al fetch.
+  const sociosFiltrados = activosPermitidos.filter((s) => {
+    if (estadoFilter && s.estadoId !== estadoFilter) return false;
+    if (grupoFilter) {
+      const enGrupo = s.grupoPrimarioId === grupoFilter || s.grupos.some((g) => g.id === grupoFilter);
+      if (!enGrupo) return false;
+    }
+    return true;
+  });
+
   useEffect(() => {
     if (asistenciaRecords.length > 0 && selectedActividadId) {
       const map: Record<string, { tipoAsistencia: string; minutosTardanza: number }> = {};
@@ -46,15 +56,15 @@ export default function AsistenciaPage() {
         map[r.socioId] = { tipoAsistencia: r.tipoAsistencia, minutosTardanza: r.minutosTardanza ?? 0 };
       }
       setRegistros(map);
-    } else if (selectedActividadId && activosPermitidos.length > 0) {
+    } else if (selectedActividadId && sociosFiltrados.length > 0) {
       const map: Record<string, { tipoAsistencia: string; minutosTardanza: number }> = {};
-      for (const s of activosPermitidos) {
+      for (const s of sociosFiltrados) {
         map[s.id] = { tipoAsistencia: 'asistio', minutosTardanza: 0 };
       }
       setRegistros(map);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asistenciaRecords, selectedActividadId, socios, estadosSocio, accionesSocio]);
+  }, [asistenciaRecords, selectedActividadId, socios, estadosSocio, accionesSocio, estadoFilter, grupoFilter]);
 
   async function handleSave() {
     if (!selectedActividadId) return;
@@ -162,13 +172,13 @@ export default function AsistenciaPage() {
         </div>
       )}
 
-      {selectedActividadId && activosPermitidos.length === 0 && !asistenciaLoading && (
+      {selectedActividadId && sociosFiltrados.length === 0 && !asistenciaLoading && (
         <div className="rounded-xl border bg-white p-12 text-center">
           <p className="text-gray-500">No hay socios habilitados para registrar asistencia</p>
         </div>
       )}
 
-      {selectedActividadId && activosPermitidos.length > 0 && (
+      {selectedActividadId && sociosFiltrados.length > 0 && (
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
           <table className="w-full text-left text-sm">
             <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
@@ -181,7 +191,7 @@ export default function AsistenciaPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {activosPermitidos.map((s) => {
+              {sociosFiltrados.map((s) => {
                 const reg = registros[s.id];
                 return (
                   <tr key={s.id} className="hover:bg-gray-50">

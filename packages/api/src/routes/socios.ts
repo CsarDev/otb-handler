@@ -259,18 +259,25 @@ socios.put('/:id', async (c) => {
   const existing = db.select({ id: schema.socios.id }).from(schema.socios).where(eq(schema.socios.id, id)).get();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
-  const estado = validarEstadoId(body);
-  if ('error' in estado) return c.json({ error: estado.error }, estado.status);
-
   const grupos = validarGrupos(body);
   if ('error' in grupos) return c.json({ error: grupos.error }, grupos.status);
+
+  // Update parcial: estadoId solo se cambia si se envía explícitamente; si se omite,
+  // se preserva el estado vigente (no se resetea a esDefecto silenciosamente).
+  let estadoId: string | undefined;
+  if (body.estadoId !== undefined) {
+    const estado = validarEstadoId(body);
+    if ('error' in estado) return c.json({ error: estado.error }, estado.status);
+    estadoId = estado.estadoId;
+  }
 
   db.transaction((tx) => {
     tx.update(schema.socios)
       .set({
         ...camposSocio(body),
-        estadoId: estado.estadoId,
-        // conserva grupoPrimarioId si no se envía
+        // solo toca estadoId cuando el body lo declara (update parcial preserva el actual)
+        ...(estadoId !== undefined ? { estadoId } : {}),
+        // conserva grupoId si no se envía
         ...(grupos.grupoPrimarioId !== undefined ? { grupoPrimarioId: grupos.grupoPrimarioId } : {}),
       })
       .where(eq(schema.socios.id, id))
