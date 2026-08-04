@@ -433,6 +433,15 @@ function genAsistencia(socioIdx: number, actIdx: number): { tipo: string; minTar
   return { tipo: 'asistio', minTardanza: 0 };
 }
 
+// Monto derivado del tipo asignado (misma fuente de verdad que la API): el
+// seed genera los aportes con el `montoBase` del tipo del socio, no con el
+// `aporte_base` legacy (que puede no coincidir con ningún montoBase del
+// catálogo — p.ej. 20/35 caen al tipo por defecto ta-pleno=50).
+function montoAportePorSocio(s: { aporteBase: number }): number {
+  const tipo = TIPOS_APORTE_CATALOGO.find((t) => t.id === idTipoAportePorMonto(s.aporteBase));
+  return tipo?.montoBase ?? s.aporteBase;
+}
+
 function genAportes() {
   const data: (typeof schema.aportes.$inferInsert)[] = [];
   const gestionActual = 2025;
@@ -445,7 +454,7 @@ function genAportes() {
         const fechaPago = pago
           ? fecha(new Date(g, m - 1, Math.floor(Math.random() * 20) + 5))
           : null;
-        const montoBase = s.aporteBase;
+        const montoBase = montoAportePorSocio(s);
         data.push({
           id: id(),
           socioId: SOCIO_IDS[sociosData.indexOf(s)],

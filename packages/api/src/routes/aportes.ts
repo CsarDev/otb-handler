@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, getTableColumns, lte, gte, or, inArray } from 'drizzle-orm';
 import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
+import { resolverMonto } from '../lib/tipos-aporte';
 
 const aportes = new Hono();
 
@@ -42,25 +43,29 @@ aportes.get('/', (c) => {
 aportes.post('/bulk', async (c) => {
   const body = await c.req.json();
 
-  if (!body.socioIds?.length || !body.montoBase) {
-    return c.json({ error: 'socioIds (array) and montoBase are required' }, 400);
+  if (!body.socioIds?.length) {
+    return c.json({ error: 'socioIds (array) is required' }, 400);
   }
 
   const socioIds: string[] = body.socioIds;
   const tipo = body.tipo ?? 'mensual';
-  const montoBase = Number(body.montoBase);
   const gestion = Number(body.gestion ?? new Date().getFullYear());
-  const mes = body.mes ? Number(body.mes) : undefined;
+  const mesInicial = body.mes ? Number(body.mes) : new Date().getMonth() + 1;
   const meses = body.meses ? Number(body.meses) : 1;
+  const override = body.monto !== undefined ? Number(body.monto) : undefined;
 
   // Enforcement: excluir socios cuyo estado no permite 'aportes'
   const permisos = cargarPermisosPorEstado();
   const socios = db
-    .select({ id: schema.socios.id, estadoId: schema.socios.estadoId })
+    .select({
+      id: schema.socios.id,
+      estadoId: schema.socios.estadoId,
+      tipoAporteId: schema.socios.tipoAporteId,
+    })
     .from(schema.socios)
     .where(inArray(schema.socios.id, socioIds))
     .all();
-  const permitidos = socios.filter((s) => permite(permisos, s.estadoId, 'aportes')).map((s) => s.id);
+  const permitidos = socios.filter((s) => permite(permisos, s.estadoId, 'aportes'));
 
   if (permitidos.length === 0) {
     return c.json({ error: 'Ningún socio puede participar en esta acción en su estado actual' }, 400);
@@ -69,14 +74,20 @@ aportes.post('/bulk', async (c) => {
   const created = db.transaction((tx) => {
     const items: Array<{ id: string; socioId: string; mes: number | undefined; gestion: number; tipo: string; montoBase: number }> = [];
 
-    for (const socioId of permitidos) {
-      if (tipo === 'anual' && body.meses) {
-        for (let m = 1; m <= Number(body.meses); m++) {
+    for (const socio of permitidos) {
+      // D6/D4: monto derivado del tipo del socio; override SOLO unico/extraordinario.
+      // mensual/anual SIEMPRE derivan (un `monto` del cliente se ignora).
+      const montoBase = resolverMonto(socio, tipo, override);
+
+      if (tipo === 'anual') {
+        // FIX bug absorvido: anual SIEMPRE 12 registros (enero-diciembre),
+        // IGNORANDO body.meses (antes generaba body.meses registros).
+        for (let m = 1; m <= 12; m++) {
           const id = crypto.randomUUID();
           tx.insert(schema.aportes)
             .values({
               id,
-              socioId,
+              socioId: socio.id,
               mes: m,
               gestion,
               tipo,
@@ -86,15 +97,36 @@ aportes.post('/bulk', async (c) => {
               estado: 'pendiente',
             })
             .run();
-          items.push({ id, socioId, mes: m, gestion, tipo, montoBase });
+          items.push({ id, socioId: socio.id, mes: m, gestion, tipo, montoBase });
+        }
+      } else if (tipo === 'mensual') {
+        // mensual = N registros desde el mes inicial (body.meses, default 1)
+        for (let i = 0; i < meses; i++) {
+          const id = crypto.randomUUID();
+          const mes = mesInicial + i;
+          tx.insert(schema.aportes)
+            .values({
+              id,
+              socioId: socio.id,
+              mes,
+              gestion,
+              tipo,
+              montoBase,
+              montoPagado: 0,
+              saldoPendiente: montoBase,
+              estado: 'pendiente',
+            })
+            .run();
+          items.push({ id, socioId: socio.id, mes, gestion, tipo, montoBase });
         }
       } else {
+        // unico / extraordinario → 1 registro
         const id = crypto.randomUUID();
         tx.insert(schema.aportes)
           .values({
             id,
-            socioId,
-            mes: mes ?? new Date().getMonth() + 1,
+            socioId: socio.id,
+            mes: mesInicial,
             gestion,
             tipo,
             montoBase,
@@ -103,7 +135,7 @@ aportes.post('/bulk', async (c) => {
             estado: 'pendiente',
           })
           .run();
-        items.push({ id, socioId, mes: mes ?? new Date().getMonth() + 1, gestion, tipo, montoBase });
+        items.push({ id, socioId: socio.id, mes: mesInicial, gestion, tipo, montoBase });
       }
     }
 
@@ -127,13 +159,13 @@ aportes.get('/socio/:socioId', (c) => {
 aportes.post('/', async (c) => {
   const body = await c.req.json();
 
-  if (!body.socioId || !body.montoBase) {
-    return c.json({ error: 'socioId and montoBase are required' }, 400);
+  if (!body.socioId) {
+    return c.json({ error: 'socioId is required' }, 400);
   }
 
   const permisos = cargarPermisosPorEstado();
   const socio = db
-    .select({ estadoId: schema.socios.estadoId })
+    .select({ estadoId: schema.socios.estadoId, tipoAporteId: schema.socios.tipoAporteId })
     .from(schema.socios)
     .where(eq(schema.socios.id, body.socioId))
     .get();
@@ -141,9 +173,26 @@ aportes.post('/', async (c) => {
   if (!socio) return c.json({ error: 'Socio not found' }, 404);
   if (!permite(permisos, socio.estadoId, 'aportes')) return c.json(ERROR_PERMISO, 409);
 
+  // D6/D4: monto derivado del tipo del socio; `monto` (override) SOLO se honra
+  // para unico/extraordinario. `montoBase` legacy del cliente se ignora (derivado).
+  const tipo = body.tipo ?? 'mensual';
+  const montoBase = resolverMonto(socio, tipo, body.monto !== undefined ? Number(body.monto) : undefined);
+  const gestion = Number(body.gestion ?? new Date().getFullYear());
+  const mes = body.mes ? Number(body.mes) : new Date().getMonth() + 1;
+
   const result = db
     .insert(schema.aportes)
-    .values({ id: crypto.randomUUID(), ...body })
+    .values({
+      id: crypto.randomUUID(),
+      socioId: body.socioId,
+      mes,
+      gestion,
+      tipo,
+      montoBase,
+      montoPagado: 0,
+      saldoPendiente: montoBase,
+      estado: 'pendiente',
+    })
     .returning()
     .get();
 

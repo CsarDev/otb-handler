@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq } from 'drizzle-orm';
+import { tipoAporteActivoDefault } from '../lib/tipos-aporte';
 
 const configRouter = new Hono();
 const MODULE_NAME = 'otb-core';
@@ -18,7 +19,14 @@ function getOtbConfig(): Record<string, unknown> | null {
 configRouter.get('/', (c) => {
   const config = getOtbConfig();
   if (!config) return c.json({ error: 'OTB not configured' }, 404);
-  return c.json(config);
+
+  // `aporteMensualBase` se deriva del catálogo de tipos de aporte (monto del
+  // tipo activo por defecto); el valor crudo guardado queda como legacy (D2).
+  const def = tipoAporteActivoDefault();
+  return c.json({
+    ...config,
+    aporteMensualBase: def?.montoBase ?? config.aporteMensualBase,
+  });
 });
 
 configRouter.put('/', async (c) => {
