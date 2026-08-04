@@ -1,4 +1,5 @@
 export * from './schema/socios';
+export * from './schema/tipos-aporte';
 export * from './schema/tipos-actividad';
 export * from './schema/actividades';
 export * from './schema/asistencia';

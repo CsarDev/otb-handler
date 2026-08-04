@@ -6,11 +6,14 @@ import {
   ACCIONES_CATALOGO,
   ESTADOS_CATALOGO,
   ESTADO_ACCIONES_CATALOGO,
+  TIPOS_APORTE_CATALOGO,
   idEstadoPorNombre,
+  idTipoAportePorMonto,
 } from './catalogo';
 
 const {
   tiposActividad,
+  tiposAporte,
   socios,
   actividades,
   asistencia,
@@ -676,6 +679,7 @@ async function main() {
     'estados_socio',
     'acciones_socio',
     'tipos_actividad',
+    'tipos_aporte',
   ];
 
   for (const t of tables) {
@@ -684,6 +688,9 @@ async function main() {
 
   db.insert(tiposActividad).values(tiposActividadData).run();
   console.log(`  ${tiposActividadData.length} tipos de actividad`);
+
+  db.insert(tiposAporte).values(TIPOS_APORTE_CATALOGO).run();
+  console.log(`  ${TIPOS_APORTE_CATALOGO.length} tipos de aporte`);
 
   db.insert(accionesSocio).values(ACCIONES_CATALOGO).run();
   console.log(`  ${ACCIONES_CATALOGO.length} acciones de socio`);
@@ -697,7 +704,14 @@ async function main() {
   db.insert(grupos).values(gruposData).run();
   console.log(`  ${gruposData.length} grupos`);
 
-  const sociosValues = sociosData.map((s, i) => ({ ...s, id: SOCIO_IDS[i] }));
+  // Asignación de tipo de aporte por monto (mismo mapeo que el backfill de la
+  // migración 0004): aporte_base que coincide con un montoBase → ese tipo,
+  // si no → tipo activo por defecto (ta-pleno).
+  const sociosValues = sociosData.map((s, i) => ({
+    ...s,
+    id: SOCIO_IDS[i],
+    tipoAporteId: idTipoAportePorMonto(s.aporteBase),
+  }));
   db.insert(socios).values(sociosValues).run();
   console.log(`  ${sociosValues.length} socios`);
 

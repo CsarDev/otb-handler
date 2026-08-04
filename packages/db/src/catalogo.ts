@@ -84,6 +84,30 @@ export const ESTADO_ACCIONES_CATALOGO: { estadoId: string; accionId: string }[] 
   { estadoId: 'est-suspendido', accionId: 'acc-reportes' },
 ];
 
+export type TipoAporteCatalogo = {
+  id: string;
+  nombre: string;
+  montoBase: number; // cuota mensual por registro de aporte
+  descripcion: string | null;
+  activo: number; // 0|1
+};
+
+// 4 tipos de aporte por defecto. Ids estables compartidos por seed.ts y la
+// migración SQL (0004), para que el backfill por monto mapee a las mismas filas.
+// `ta-pleno` es el tipo activo por defecto (fallback del backfill).
+export const TIPOS_APORTE_CATALOGO: TipoAporteCatalogo[] = [
+  { id: 'ta-pleno', nombre: 'Socio Pleno', montoBase: 50, descripcion: 'Cuota plena mensual', activo: 1 },
+  { id: 'ta-familiar', nombre: 'Familiar', montoBase: 30, descripcion: 'Cuota familiar', activo: 1 },
+  { id: 'ta-jubilado', nombre: 'Jubilado', montoBase: 25, descripcion: 'Cuota jubilados', activo: 1 },
+  { id: 'ta-honorario', nombre: 'Honorario', montoBase: 0, descripcion: 'Cuota simbólica (0)', activo: 1 },
+];
+
+export function idTipoAportePorMonto(montoBase: number): string {
+  const tipo = TIPOS_APORTE_CATALOGO.find((t) => t.montoBase === montoBase);
+  // Fallback al tipo activo por defecto si el monto no coincide con ninguno
+  return tipo?.id ?? TIPOS_APORTE_CATALOGO[0].id;
+}
+
 export function idEstadoPorNombre(nombre: string): string {
   const estado = ESTADOS_CATALOGO.find((e) => e.nombre === nombre);
   if (!estado) throw new Error(`Estado no encontrado en el catálogo: ${nombre}`);
