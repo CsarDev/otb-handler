@@ -56,13 +56,16 @@ export type Socio = {
   fechaNac: string | null;
   fechaIng: string | null;
   fechaAlta: string | null;
-  // Derivado del tipo asignado (tipoAporteId) — NO es una fuente de verdad
-  // propia; se expone en el response para compat con lecturas legacy/UI.
+  // Derivado del `montoBase` del tipo asignado (vía join) — NO es una fuente
+  // de verdad propia; se expone en el response para compat con lecturas
+  // legacy/UI. Un socio legacy con tipo NULL se presenta con el tipo activo
+  // por defecto, así que siempre se resuelve.
   aporteBase: number;
-  // Vía FK a tipos_aporte.id; nullable durante la transición. La API lo
-  // garantiza en POST/PUT (default al tipo activo).
-  tipoAporteId?: string | null;
-  tipoAporteNombre?: string | null; // vía join, solo en respuestas
+  // Vía FK a tipos_aporte.id. La API los garantiza en POST/PUT (default al tipo
+  // activo, D3) y, para socios legacy (NULL), el shape los resuelve con el tipo
+  // activo por defecto en `armarSocio`. Por eso son REQUIRED en la salida.
+  tipoAporteId: string;
+  tipoAporteNombre: string; // vía join, siempre resuelto con el fallback al default
   estadoId: string | null;
   estadoNombre: string | null; // vía join, solo en respuestas
   estadoColor: string | null; // vía join, solo en respuestas
@@ -74,10 +77,16 @@ export type Socio = {
 };
 
 // Input de POST/PUT de socio: `aporteBase` NO es escribible (derivado del tipo);
-// `tipoAporteId` es opcional y default al tipo activo si se omite.
+// `tipoAporteId` es opcional en el input y default al tipo activo si se omite.
 export type SocioInput = Omit<
   Socio,
-  'estadoNombre' | 'estadoColor' | 'esActivo' | 'grupos' | 'tipoAporteNombre' | 'aporteBase'
+  | 'estadoNombre'
+  | 'estadoColor'
+  | 'esActivo'
+  | 'grupos'
+  | 'tipoAporteNombre'
+  | 'aporteBase'
+  | 'tipoAporteId'
 > & {
   tipoAporteId?: string;
   grupoAdicionalIds?: string[]; // payload de POST/PUT

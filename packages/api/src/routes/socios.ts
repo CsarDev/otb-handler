@@ -2,11 +2,14 @@ import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, like, or, inArray } from 'drizzle-orm';
 import type { Socio } from '@otb/core';
+import { tipoAporteActivoDefault, tipoAportePrimero } from '../lib/tipos-aporte';
 
 const socios = new Hono();
 
 // Columnas del socio SIN el legacy `estado` (se dropea en fase 0004),
-// más el join a estados_socio para el shape enriquecido de respuesta.
+// más el join a estados_socio y tipos_aporte para el shape enriquecido.
+// `aporteBase` se DERIVA del montoBase del tipo asignado (no de la columna
+// legacy, que se conserva solo para lecturas legacy/UI — D2).
 const selectSociosConEstado = () =>
   db
     .select({
@@ -22,8 +25,10 @@ const selectSociosConEstado = () =>
       fechaNac: schema.socios.fechaNac,
       fechaIng: schema.socios.fechaIng,
       fechaAlta: schema.socios.fechaAlta,
-      aporteBase: schema.socios.aporteBase,
+      aporteBase: schema.tiposAporte.montoBase, // derivado del tipo (join)
       estadoId: schema.socios.estadoId,
+      tipoAporteId: schema.socios.tipoAporteId,
+      tipoAporteNombre: schema.tiposAporte.nombre,
       grupoPrimarioId: schema.socios.grupoPrimarioId,
       motivoBaja: schema.socios.motivoBaja,
       fechaBaja: schema.socios.fechaBaja,
@@ -32,7 +37,8 @@ const selectSociosConEstado = () =>
       esActivo: schema.estadosSocio.esActivo,
     })
     .from(schema.socios)
-    .leftJoin(schema.estadosSocio, eq(schema.socios.estadoId, schema.estadosSocio.id));
+    .leftJoin(schema.estadosSocio, eq(schema.socios.estadoId, schema.estadosSocio.id))
+    .leftJoin(schema.tiposAporte, eq(schema.socios.tipoAporteId, schema.tiposAporte.id));
 
 // Grupos adicionales: 2 queries batch (membresías + nombres) adjuntadas en memoria.
 // Devuelve socioId → grupos[{ id, nombre }]. Sin N+1.
@@ -72,12 +78,33 @@ function gruposPorSocio(ids: string[]): Map<string, { id: string; nombre: string
 type QuerySocios = ReturnType<typeof selectSociosConEstado>;
 type FilaSocio = Awaited<ReturnType<QuerySocios['all']>>[number];
 
+// El shape de salida SIEMPRE resuelve tipoAporteId/tipoAporteNombre/aporteBase:
+// - socio con tipo → valores del join;
+// - socio legacy con tipoAporteId NULL → fallback al tipo activo por defecto
+//   (escenario legacy de la spec socios-estados). Esto hace que los campos
+//   sean required en el tipo `Socio` de @otb/core.
 function armarSocio(
   fila: FilaSocio,
   grupos: Map<string, { id: string; nombre: string }[]>,
 ): Socio {
+  let tipoAporteId = fila.tipoAporteId;
+  let tipoAporteNombre = fila.tipoAporteNombre;
+  let aporteBase = fila.aporteBase;
+
+  if (tipoAporteId == null || tipoAporteNombre == null || aporteBase == null) {
+    const def = tipoAporteActivoDefault() ?? tipoAportePrimero();
+    if (def) {
+      tipoAporteId = tipoAporteId ?? def.id;
+      tipoAporteNombre = tipoAporteNombre ?? def.nombre;
+      aporteBase = aporteBase ?? def.montoBase;
+    }
+  }
+
   return {
     ...fila,
+    tipoAporteId: tipoAporteId ?? '',
+    tipoAporteNombre: tipoAporteNombre ?? '',
+    aporteBase: aporteBase ?? 0,
     esActivo: fila.esActivo ?? 0,
     grupos: grupos.get(fila.id) ?? [],
   };
@@ -129,6 +156,30 @@ socios.get('/:id', (c) => {
 });
 
 // ---- Validaciones compartidas POST/PUT ----
+
+// Validación de tipoAporteId (spec aporte-types, Socio Assignment):
+// - si el body lo declara → debe existir Y estar activo (400 si no);
+// - si el body lo omite → el PRIMER tipo activo como default (D3).
+function validarTipoAporteId(body: Record<string, unknown>): { tipoAporteId: string } | { error: string; status: 400 } {
+  if (body.tipoAporteId !== undefined && body.tipoAporteId !== null) {
+    const existe = db
+      .select({ id: schema.tiposAporte.id })
+      .from(schema.tiposAporte)
+      .where(
+        and(
+          eq(schema.tiposAporte.id, String(body.tipoAporteId)),
+          eq(schema.tiposAporte.activo, 1),
+        ),
+      )
+      .get();
+    if (!existe) return { error: 'tipoAporteId is invalid or inactive', status: 400 };
+    return { tipoAporteId: String(body.tipoAporteId) };
+  }
+
+  const defecto = tipoAporteActivoDefault();
+  if (!defecto) return { error: 'No hay un tipo de aporte activo configurado', status: 400 };
+  return { tipoAporteId: defecto.id };
+}
 
 function validarEstadoId(body: Record<string, unknown>): { estadoId: string } | { error: string; status: 400 } {
   if (body.estadoId !== undefined) {
@@ -189,7 +240,8 @@ function validarGrupos(body: Record<string, unknown>): { grupoPrimarioId?: strin
   return { grupoPrimarioId, grupoAdicionalIds };
 }
 
-// Campos editables del socio (whitelist: excluye id, estadoId, grupos, baja)
+// Campos editables del socio (whitelist: excluye id, estadoId, grupos, baja y
+// aporteBase — el monto ya NO es escribible, deriva del tipo asignado).
 function camposSocio(body: Record<string, unknown>): Partial<typeof schema.socios.$inferInsert> {
   const campos: Partial<typeof schema.socios.$inferInsert> = {};
   const editables = [
@@ -204,7 +256,6 @@ function camposSocio(body: Record<string, unknown>): Partial<typeof schema.socio
     'fechaNac',
     'fechaIng',
     'fechaAlta',
-    'aporteBase',
   ] as const;
   for (const k of editables) {
     const v = body[k];
@@ -225,6 +276,9 @@ socios.post('/', async (c) => {
   const estado = validarEstadoId(body);
   if ('error' in estado) return c.json({ error: estado.error }, estado.status);
 
+  const tipoAporte = validarTipoAporteId(body);
+  if ('error' in tipoAporte) return c.json({ error: tipoAporte.error }, tipoAporte.status);
+
   const grupos = validarGrupos(body);
   if ('error' in grupos) return c.json({ error: grupos.error }, grupos.status);
 
@@ -234,6 +288,7 @@ socios.post('/', async (c) => {
     id,
     ...camposSocio(body),
     estadoId: estado.estadoId,
+    tipoAporteId: tipoAporte.tipoAporteId,
     ...(grupos.grupoPrimarioId ? { grupoPrimarioId: grupos.grupoPrimarioId } : {}),
   } as typeof schema.socios.$inferInsert;
 
@@ -271,17 +326,35 @@ socios.put('/:id', async (c) => {
     estadoId = estado.estadoId;
   }
 
+  // tipoAporteId: igualmente parcial — si el body lo omite se PRESERVA el tipo
+  // vigente (un PUT con solo otros campos no resetea el tipo a default).
+  let tipoAporteId: string | undefined;
+  if (body.tipoAporteId !== undefined && body.tipoAporteId !== null) {
+    const tipoAporte = validarTipoAporteId(body);
+    if ('error' in tipoAporte) return c.json({ error: tipoAporte.error }, tipoAporte.status);
+    tipoAporteId = tipoAporte.tipoAporteId;
+  }
+
   db.transaction((tx) => {
-    tx.update(schema.socios)
-      .set({
-        ...camposSocio(body),
-        // solo toca estadoId cuando el body lo declara (update parcial preserva el actual)
-        ...(estadoId !== undefined ? { estadoId } : {}),
-        // conserva grupoId si no se envía
-        ...(grupos.grupoPrimarioId !== undefined ? { grupoPrimarioId: grupos.grupoPrimarioId } : {}),
-      })
-      .where(eq(schema.socios.id, id))
-      .run();
+    // Update parcial: campos editables + relaciones solo cuando el body los declara.
+    // Si no hay nada que actualizar (p.ej. body con solo `aporteBase`, que ya no
+    // es escribible) el `.set()` se omite → la respuesta devuelve el socio vigente
+    // sin reescribir nada (spec: "Saving a raw aporteBase" no 500).
+    const updateFields = {
+      ...camposSocio(body),
+      // solo toca estadoId cuando el body lo declara (update parcial preserva el actual)
+      ...(estadoId !== undefined ? { estadoId } : {}),
+      // solo toca tipoAporteId cuando el body lo declara (update parcial)
+      ...(tipoAporteId !== undefined ? { tipoAporteId } : {}),
+      // conserva grupoId si no se envía
+      ...(grupos.grupoPrimarioId !== undefined ? { grupoPrimarioId: grupos.grupoPrimarioId } : {}),
+    };
+    if (Object.keys(updateFields).length > 0) {
+      tx.update(schema.socios)
+        .set(updateFields)
+        .where(eq(schema.socios.id, id))
+        .run();
+    }
 
     // Reemplazo atómico de grupos adicionales: SOLO cuando el body los declara.
     // Si el cliente no envía grupoAdicionalIds (update parcial), se preservan
