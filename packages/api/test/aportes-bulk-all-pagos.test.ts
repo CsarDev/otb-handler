@@ -1,6 +1,6 @@
 // Task-10 / Capability payments: /bulk/all filtra por estado y GET /:id/pagos.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrarDb, limpiarDatos, requestJson, crearSocio, filas, IDS } from './helpers';
+import { migrarDb, limpiarDatos, requestJson, crearSocio, filas, ejecutar, IDS } from './helpers';
 
 beforeAll(() => migrarDb());
 beforeEach(() => limpiarDatos());
@@ -91,6 +91,20 @@ describe('Aportes — GET /:id/pagos (historial de movimientos)', () => {
     const fechas = data.map((m: any) => m.fecha);
     expect(fechas).toEqual(['2025-01-05', '2025-01-10']);
     expect(data.every((m: any) => m.tipo === 'ingreso')).toBe(true);
+  });
+
+  it('excluye movimientos anulados del historial (spec payments)', async () => {
+    const { aporteId } = await crearAporteConPagos();
+
+    // Marca un movimiento como anulado (soft-delete) directamente en la DB.
+    const movs = filas('SELECT id FROM movimientos WHERE referencia_id = ?', [aporteId]);
+    expect(movs.length).toBe(2);
+    ejecutar('UPDATE movimientos SET anulado = 1 WHERE id = ?', [movs[0].id]);
+
+    const { status, data } = await requestJson(`/api/aportes/${aporteId}/pagos`);
+    expect(status).toBe(200);
+    expect(data).toHaveLength(1);
+    expect(data[0].anulado).toBe(0);
   });
 
   it('aporte sin pagos devuelve []', async () => {

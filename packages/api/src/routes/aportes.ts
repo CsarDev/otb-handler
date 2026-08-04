@@ -222,7 +222,8 @@ aportes.get('/:id/pagos', (c) => {
 
   if (!aporte) return c.json({ error: 'Aporte not found' }, 404);
 
-  // Historial de movimientos del aporte: solo ingresos (patrón multas.get('/:id/pagos'))
+  // Historial de movimientos del aporte: solo ingresos NO anulados
+  // (patrón multas.get('/:id/pagos') + exclusión de anulados según spec payments)
   const pagos = db
     .select()
     .from(schema.movimientos)
@@ -230,6 +231,7 @@ aportes.get('/:id/pagos', (c) => {
       and(
         eq(schema.movimientos.referenciaId, id),
         eq(schema.movimientos.tipo, 'ingreso'),
+        eq(schema.movimientos.anulado, 0),
       ),
     )
     .orderBy(schema.movimientos.fecha)
