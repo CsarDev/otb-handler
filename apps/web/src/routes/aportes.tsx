@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useAppStore, selectAportesActivos } from '../stores/app.store';
+import { useAppStore } from '../stores/app.store';
 import { socioPermiteUI } from '../lib/permisos';
 import { Badge } from '@otb/ui';
-import type { Aporte, AporteRegistro, Movimiento, BulkAporteRequest } from '@otb/core';
+import type { Aporte, AporteInput, AporteRegistro, Movimiento } from '@otb/core';
 
 const inputCls =
   'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none';
@@ -25,8 +25,12 @@ const MODALIDAD_LABEL: Record<string, string> = {
 };
 
 /**
- * Schema del form de DEFINICIÓN de aporte (crear/editar). El `id` (slug) se
- * acepta SOLO en POST; en edición es inmutable y se muestra read-only.
+ * Schema del form de DEFINICIÓN de aporte (crear/editar). El `id` es generado
+ * por el SERVER (UUID, D14) — nunca se pide en el form; en edición se muestra
+ * read-only. La asignación ("Asignar a") vive en el state del componente y se
+ * agrega al payload al crear: `socioIds` (modo socios) y/o `aplicaGrupoId`
+ * (modo grupo). En edición PUT es field-edit only (D19): se envía solo el
+ * grupo (campo de definición), nunca socioIds.
  */
 const definicionSchema = z.object({
   nombre: z.string().min(1, 'Requerido'),
@@ -51,20 +55,6 @@ const defaultDefinicion: DefinicionForm = {
   aplicaGrupoId: '',
   activo: true,
 };
-
-/**
- * Schema del form de GENERACIÓN de cobros (definition-driven). Se seleccionan
- * definiciones (`aporteIds`), socios (o "Todos"), gestión y mes opcional —
- * NO hay `tipo`/`monto`/`meses` en el payload (D8).
- */
-const generarSchema = z.object({
-  aporteIds: z.array(z.string()).default([]),
-  socioIds: z.array(z.string()).default([]),
-  gestion: z.coerce.number().min(2000, 'Gestión requerida'),
-  mes: z.string().default(''), // '' = sin mes (opcional; mensual usa la ventana de vigencia)
-});
-
-type GenerarForm = z.infer<typeof generarSchema>;
 
 const pagarSchema = z.object({
   monto: z.coerce.number().min(0.01, 'Monto requerido'),
@@ -93,12 +83,70 @@ function ventanaVigencia(a: Aporte): string {
   return 'abierta';
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Espejo UI del cálculo de meses del server (lib/aportes.ts, D3/D8): usado solo
+// para el hint de conteo en vivo ANTES de enviar. La deduplicación (D13) puede
+// reducir el total real.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function fechaInicioMesUI(gestion: number, mes: number): string {
+  return `${gestion}-${pad2(mes)}-01`;
+}
+
+function finDeMesYMDUI(gestion: number, mes: number): string {
+  const ultimo = new Date(gestion, mes, 0).getDate();
+  return `${gestion}-${pad2(mes)}-${pad2(ultimo)}`;
+}
+
+function mesesDefinicionUI(
+  def: { inicio: string | null; fin: string | null },
+  gestion: number,
+): number[] {
+  const resultado: number[] = [];
+  for (let m = 1; m <= 12; m++) {
+    const inicioOk = def.inicio == null || fechaInicioMesUI(gestion, m) >= def.inicio;
+    const finOk = def.fin == null || finDeMesYMDUI(gestion, m) <= def.fin;
+    if (inicioOk && finOk) resultado.push(m);
+  }
+  return resultado;
+}
+
+function mesesParaDefinicionUI(
+  def: { recurrencia: Aporte['recurrencia']; inicio: string | null; fin: string | null },
+  gestion: number,
+): number[] {
+  if (def.recurrencia === 'anual') return Array.from({ length: 12 }, (_, i) => i + 1);
+  if (def.recurrencia === 'mensual') return mesesDefinicionUI(def, gestion);
+  return [1]; // unico / extraordinario
+}
+
+/**
+ * Toast local mínimo (D22): banner fijo, auto-dismiss ~3s, sin dependencias.
+ * `role="status"` + `aria-live="polite"` para accesibilidad.
+ */
+function CobroToast({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-4 left-1/2 z-[60] w-max max-w-[90vw] -translate-x-1/2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white shadow-lg"
+    >
+      {message}
+    </div>
+  );
+}
+
 export default function AportesPage() {
   const {
     aportes, aportesLoading, aportesError,
     addAporte, updateAporte, removeAporte,
     aporteRegistros, aporteRegistrosLoading, aporteRegistrosError, fetchAporteRegistros,
-    pagarAporte, anularAporte, createAportesBulk, createAportesBulkAll, fetchPagosAporte,
+    pagarAporte, anularAporte, fetchPagosAporte,
     socios, fetchSocios, estadosSocio, accionesSocio, grupos, fetchConfig,
   } = useAppStore();
 
@@ -114,9 +162,13 @@ export default function AportesPage() {
   const [definicionError, setDefinicionError] = useState<string | null>(null);
   const [savingDefinicion, setSavingDefinicion] = useState(false);
 
-  /* ── Generación batch state ── */
-  const [allSocios, setAllSocios] = useState(false);
-  const [generando, setGenerando] = useState(false);
+  /* ── "Asignar a" (D21): modos exclusivos a nadie / a socios / a un grupo ── */
+  const [asignar, setAsignar] = useState<'nadie' | 'socios' | 'grupo'>('nadie');
+  const [selectedSocioIds, setSelectedSocioIds] = useState<string[]>([]);
+
+  /* ── Toast de conteo generado (D22) ── */
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
 
   /* ── Payment history (modal) state ── */
   const [pagosAporteId, setPagosAporteId] = useState<string | null>(null);
@@ -127,16 +179,6 @@ export default function AportesPage() {
   const definicionForm = useForm<DefinicionForm>({
     resolver: zodResolver(definicionSchema) as any,
     defaultValues: defaultDefinicion,
-  });
-
-  const generarForm = useForm<GenerarForm>({
-    resolver: zodResolver(generarSchema) as any,
-    defaultValues: {
-      aporteIds: [],
-      socioIds: [],
-      gestion: new Date().getFullYear(),
-      mes: '',
-    },
   });
 
   const payForm = useForm<PagarForm>({
@@ -168,18 +210,26 @@ export default function AportesPage() {
   const permitidos = socios.filter((s) =>
     socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'aportes'),
   );
-  const selectedSocioIds = allSocios ? permitidos.map((s) => s.id) : generarForm.watch('socioIds');
   const socioById = new Map(socios.map((s) => [s.id, s]));
-  const aportesActivos = selectAportesActivos(aportes);
-  const selectedDefiniciones = generarForm.watch('aporteIds')
-    .map((id) => aportes.find((a) => a.id === id))
-    .filter((a): a is Aporte => Boolean(a));
+
+  /** Toast mínimo (D22): muestra el mensaje y auto-dismiss a los ~3s. */
+  function showToast(msg: string) {
+    setToast(msg);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3000);
+  }
+
+  useEffect(() => {
+    return () => window.clearTimeout(toastTimer.current);
+  }, []);
 
   /* ── Definición CRUD handlers ── */
 
   function openDefinicionCreate() {
     setEditingDefinicion(null);
     setDefinicionError(null);
+    setAsignar('nadie');
+    setSelectedSocioIds([]);
     definicionForm.reset(defaultDefinicion);
     setShowDefinicionForm(true);
   }
@@ -187,6 +237,8 @@ export default function AportesPage() {
   function openDefinicionEdit(a: Aporte) {
     setEditingDefinicion(a);
     setDefinicionError(null);
+    setAsignar('nadie');
+    setSelectedSocioIds([]);
     definicionForm.reset({
       nombre: a.nombre,
       monto: a.monto,
@@ -200,6 +252,19 @@ export default function AportesPage() {
     setShowDefinicionForm(true);
   }
 
+  /** Modos "Asignar a" exclusivos (D21): cambiar de modo limpia el otro campo. */
+  function handleAsignarChange(mode: 'nadie' | 'socios' | 'grupo') {
+    setAsignar(mode);
+    if (mode !== 'grupo') definicionForm.setValue('aplicaGrupoId', '');
+    if (mode !== 'socios') setSelectedSocioIds([]);
+  }
+
+  function toggleSocio(id: string) {
+    setSelectedSocioIds((current) =>
+      current.includes(id) ? current.filter((s) => s !== id) : [...current, id],
+    );
+  }
+
   async function handleDefinicionSubmit(data: DefinicionForm) {
     // Ventana invertida: validación local (el API la rechaza con 400 igualmente).
     if (data.inicio && data.fin && data.fin < data.inicio) {
@@ -207,25 +272,48 @@ export default function AportesPage() {
       return;
     }
     setDefinicionError(null);
-    const payload = {
-      nombre: data.nombre.trim(),
-      monto: data.monto,
-      recurrencia: data.recurrencia,
-      inicio: data.inicio || null,
-      fin: data.fin || null,
-      modalidadPago: data.modalidadPago,
-      aplicaGrupoId: data.aplicaGrupoId || null,
-      activo: data.activo ? 1 : 0,
-    };
     setSavingDefinicion(true);
     try {
       if (editingDefinicion) {
-        await updateAporte(editingDefinicion.id, payload);
+        // D19: PUT es field-edit only — solo campos de definición (incluye el
+        // grupo como campo editable); sin socioIds, sin asignaciones, sin generación.
+        await updateAporte(editingDefinicion.id, {
+          nombre: data.nombre.trim(),
+          monto: data.monto,
+          recurrencia: data.recurrencia,
+          inicio: data.inicio || null,
+          fin: data.fin || null,
+          modalidadPago: data.modalidadPago,
+          aplicaGrupoId: data.aplicaGrupoId || null,
+          activo: data.activo ? 1 : 0,
+        });
       } else {
-        await addAporte(payload);
+        // D15: form unificado — payload sin `id` (server UUID, D14) con la
+        // asignación elegida en "Asignar a" (D21).
+        const payload: AporteInput = {
+          nombre: data.nombre.trim(),
+          monto: data.monto,
+          recurrencia: data.recurrencia,
+          inicio: data.inicio || null,
+          fin: data.fin || null,
+          modalidadPago: data.modalidadPago,
+          activo: data.activo ? 1 : 0,
+        };
+        if (asignar === 'socios' && selectedSocioIds.length > 0) {
+          payload.socioIds = selectedSocioIds;
+        }
+        if (asignar === 'grupo' && data.aplicaGrupoId) {
+          payload.aplicaGrupoId = data.aplicaGrupoId;
+        }
+        const generados = await addAporte(payload);
+        // D22: feedback del conteo generado; luego se refrescan los cobros.
+        showToast(`Se generaron ${generados.count} cobro(s)`);
+        void fetchAporteRegistros();
       }
       setShowDefinicionForm(false);
       setEditingDefinicion(null);
+      setAsignar('nadie');
+      setSelectedSocioIds([]);
     } catch (e) {
       setDefinicionError((e as Error).message);
     } finally {
@@ -248,53 +336,7 @@ export default function AportesPage() {
     }
   }
 
-  /* ── Generación de cobros ── */
-
-  function toggleDefinicion(id: string) {
-    const current = generarForm.getValues('aporteIds');
-    const next = current.includes(id) ? current.filter((a) => a !== id) : [...current, id];
-    generarForm.setValue('aporteIds', next);
-  }
-
-  function toggleSocio(id: string) {
-    const current = generarForm.getValues('socioIds');
-    const next = current.includes(id) ? current.filter((s) => s !== id) : [...current, id];
-    generarForm.setValue('socioIds', next, { shouldValidate: true });
-  }
-
-  /**
-   * Generación definition-driven: `createAportesBulk` (POST /bulk con socioIds)
-   * o `createAportesBulkAll` (POST /bulk/all sin socioIds, el server resuelve
-   * los permitidos por estado). El payload NO lleva `tipo`/`monto`/`meses` —
-   * monto y conteo salen de la definición (D8).
-   */
-  async function handleGenerar(data: GenerarForm) {
-    if (data.aporteIds.length === 0) { alert('Seleccione al menos una definición'); return; }
-    if (!allSocios && data.socioIds.length === 0) { alert('Seleccione al menos un socio'); return; }
-
-    const body: BulkAporteRequest = {
-      aporteIds: data.aporteIds,
-      gestion: data.gestion,
-    };
-    if (data.mes !== '') body.mes = Number(data.mes);
-    if (!allSocios) body.socioIds = data.socioIds;
-
-    setGenerando(true);
-    try {
-      const res = allSocios
-        ? await createAportesBulkAll(body)
-        : await createAportesBulk(body);
-      await fetchAporteRegistros();
-      setAllSocios(false);
-      generarForm.reset({ aporteIds: [], socioIds: [], gestion: new Date().getFullYear(), mes: '' });
-      alert(`${res.count} cobro(s) generado(s)`);
-    } catch (e) {
-      // El 400 "Ningún socio puede participar..." de bulk/all llega como mensaje amigable.
-      alert((e as Error).message ?? 'Error al generar cobros');
-    } finally {
-      setGenerando(false);
-    }
-  }
+  /* ── Pagos / anulación ── */
 
   async function handlePay(data: PagarForm) {
     if (payingId === null) return;
@@ -416,96 +458,6 @@ export default function AportesPage() {
                 );
               })}
             </div>
-          </div>
-
-          {/* Generación de cobros */}
-          <div className="rounded-xl border bg-white p-6 shadow-sm">
-            <h3 className="mb-4 text-lg font-bold text-gray-900">Generar Cobros</h3>
-            <form onSubmit={generarForm.handleSubmit(handleGenerar)} className="space-y-4">
-              <div>
-                <label className={labelCls}>Definiciones (una o más)</label>
-                <div className="flex min-h-10 flex-wrap gap-2 rounded-lg border border-gray-300 p-2">
-                  {aportesActivos.length === 0 && (
-                    <span className="text-xs text-gray-400">No hay definiciones activas. Cree una definición arriba.</span>
-                  )}
-                  {aportesActivos.map((a) => {
-                    const selected = generarForm.watch('aporteIds').includes(a.id);
-                    return (
-                      <button
-                        key={a.id}
-                        type="button"
-                        onClick={() => toggleDefinicion(a.id)}
-                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
-                          selected
-                            ? 'bg-blue-600 text-white'
-                            : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-                        }`}
-                      >
-                        {a.nombre}
-                        {selected && <span aria-hidden>×</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-                {selectedDefiniciones.length > 0 && (
-                  <p className="mt-1 text-xs text-gray-400">
-                    {selectedDefiniciones.map((d) => `${d.nombre} (Bs ${d.monto.toFixed(2)})`).join(' · ')}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className={labelCls}>Socios (solo con permiso de "aportes")</label>
-                <label className="mb-2 flex cursor-pointer items-center gap-2 text-sm text-blue-600 hover:text-blue-700">
-                  <input type="checkbox" checked={allSocios} onChange={(e) => setAllSocios(e.target.checked)} className="rounded border-gray-300" />
-                  Todos los socios habilitados ({permitidos.length})
-                </label>
-                {!allSocios && (
-                  <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 p-2">
-                    {permitidos.map((s) => {
-                      const checked = generarForm.watch('socioIds').includes(s.id);
-                      return (
-                        <label key={s.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
-                          <input type="checkbox" checked={checked} onChange={() => toggleSocio(s.id)} className="rounded border-gray-300" />
-                          {s.nombre} {s.apellidoPaterno}
-                        </label>
-                      );
-                    })}
-                    {permitidos.length === 0 && <p className="px-2 py-1 text-sm text-gray-400">Ningún socio tiene permiso de "aportes".</p>}
-                  </div>
-                )}
-                <p className="mt-1 text-xs text-gray-400">{selectedSocioIds.length} socio(s) seleccionado(s)</p>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div>
-                  <label className={labelCls}>Gestión</label>
-                  <input type="number" {...generarForm.register('gestion')} className={inputCls} />
-                </div>
-                <div>
-                  <label className={labelCls}>Mes <span className="font-normal text-gray-400">(opcional)</span></label>
-                  <select {...generarForm.register('mes')} className={inputCls}>
-                    <option value="">—</option>
-                    {Array.from({ length: 12 }, (_, i) => (<option key={i + 1} value={i + 1}>{i + 1}</option>))}
-                  </select>
-                </div>
-                <div className="flex items-end">
-                  <p className="text-xs text-gray-500">
-                    Mes inicial para mensual; para anual se generan los 12 meses; único/extraordinario generan 1 cobro.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="submit"
-                  disabled={generando || (selectedSocioIds.length === 0 && !allSocios) || generarForm.watch('aporteIds').length === 0}
-                  className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {generando ? 'Generando...' : 'Generar Cobros'}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}
@@ -698,14 +650,106 @@ export default function AportesPage() {
                     <option value="pago_unico">Pago único</option>
                   </select>
                 </div>
-                <div>
-                  <label className={labelCls}>Aplica a grupo <span className="font-normal text-gray-400">(opcional)</span></label>
-                  <select {...definicionForm.register('aplicaGrupoId')} className={inputCls}>
-                    <option value="">Global (todos)</option>
-                    {grupos.map((g) => (<option key={g.id} value={g.id}>{g.nombre}</option>))}
-                  </select>
-                </div>
+                {editingDefinicion ? (
+                  <div>
+                    <label className={labelCls}>Aplica a grupo <span className="font-normal text-gray-400">(opcional)</span></label>
+                    <select {...definicionForm.register('aplicaGrupoId')} className={inputCls}>
+                      <option value="">Global (sin grupo)</option>
+                      {grupos.map((g) => (<option key={g.id} value={g.id}>{g.nombre}</option>))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex items-end pb-1">
+                    <p className="text-xs text-gray-400">La asignación se elige en "Asignar a".</p>
+                  </div>
+                )}
               </div>
+
+              {/* ── "Asignar a" — SOLO al crear (D21): modos exclusivos ── */}
+              {!editingDefinicion && (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <label className={labelCls}>Asignar a</label>
+                  <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-700">
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input type="radio" name="asignar" checked={asignar === 'nadie'} onChange={() => handleAsignarChange('nadie')} className="accent-blue-600" />
+                      A nadie (solo crear)
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input type="radio" name="asignar" checked={asignar === 'socios'} onChange={() => handleAsignarChange('socios')} className="accent-blue-600" />
+                      A socios
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input type="radio" name="asignar" checked={asignar === 'grupo'} onChange={() => handleAsignarChange('grupo')} className="accent-blue-600" />
+                      A un grupo
+                    </label>
+                  </div>
+
+                  {asignar === 'socios' && (
+                    <div className="mt-3">
+                      <label className={labelCls}>Socios (solo con permiso de "aportes")</label>
+                      <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
+                        {permitidos.map((s) => {
+                          const checked = selectedSocioIds.includes(s.id);
+                          return (
+                            <label key={s.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
+                              <input type="checkbox" checked={checked} onChange={() => toggleSocio(s.id)} className="rounded border-gray-300" />
+                              {s.nombre} {s.apellidoPaterno}
+                            </label>
+                          );
+                        })}
+                        {permitidos.length === 0 && <p className="px-2 py-1 text-sm text-gray-400">Ningún socio tiene permiso de "aportes".</p>}
+                      </div>
+                      <p className="mt-1 text-xs text-gray-400">{selectedSocioIds.length} socio(s) seleccionado(s)</p>
+                    </div>
+                  )}
+
+                  {asignar === 'grupo' && (
+                    <div className="mt-3">
+                      <label className={labelCls}>Grupo</label>
+                      <select {...definicionForm.register('aplicaGrupoId')} className={inputCls}>
+                        <option value="">Seleccionar grupo...</option>
+                        {grupos.map((g) => (<option key={g.id} value={g.id}>{g.nombre}</option>))}
+                      </select>
+                      <p className="mt-1 text-xs text-gray-400">
+                        Se generan cobros para los miembros ACTUALES del grupo al crear.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Hint de conteo en vivo: meses × target para la gestión actual (D21); la deduplicación (D13) puede reducir el total. */}
+                  {asignar !== 'nadie' && (
+                    (() => {
+                      const gestion = new Date().getFullYear();
+                      const meses = mesesParaDefinicionUI(
+                        {
+                          recurrencia: definicionForm.watch('recurrencia'),
+                          inicio: definicionForm.watch('inicio') || null,
+                          fin: definicionForm.watch('fin') || null,
+                        },
+                        gestion,
+                      );
+                      const target = asignar === 'socios'
+                        ? selectedSocioIds.length
+                        : (() => {
+                            const gid = definicionForm.watch('aplicaGrupoId');
+                            if (!gid) return 0;
+                            return socios.filter(
+                              (s) => s.grupoPrimarioId === gid || s.grupos.some((g) => g.id === gid),
+                            ).length;
+                          })();
+                      const estimado = meses.length * target;
+                      return (
+                        <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                          ≈ {estimado} cobro(s) estimado(s) para la gestión {gestion}
+                          {meses.length === 0
+                            ? ' — la vigencia no cubre la gestión actual'
+                            : ' (la deduplicación puede reducir el total)'}
+                        </p>
+                      );
+                    })()
+                  )}
+                </div>
+              )}
               <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
                 <input type="checkbox" {...definicionForm.register('activo')} className="rounded border-gray-300" />
                 Activo (se puede asignar a socios y generar cobros)
@@ -803,6 +847,9 @@ export default function AportesPage() {
           </div>
         </div>
       )}
+
+      {/* Toast de conteo generado (D22) */}
+      <CobroToast message={toast} />
     </div>
   );
 }
