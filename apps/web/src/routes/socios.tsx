@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useAppStore, selectTiposAporteActivos } from '../stores/app.store';
+import { useAppStore, selectAportesActivos } from '../stores/app.store';
 import { Badge } from '@otb/ui';
-import type { Socio, Grupo } from '@otb/core';
+import type { Socio, Grupo, Aporte } from '@otb/core';
 
 const socioSchema = z.object({
   nombre: z.string().min(1, 'Requerido'),
@@ -18,7 +18,7 @@ const socioSchema = z.object({
   fechaNac: z.string().nullish().default(''),
   fechaIng: z.string().nullish().default(''),
   fechaAlta: z.string().nullish().default(''),
-  tipoAporteId: z.string().nullish().default(''),
+  aporteIds: z.array(z.string()).default([]),
   estadoId: z.string().nullish().default(''),
   grupoPrimarioId: z.string().nullish().default(''),
   grupoAdicionalIds: z.array(z.string()).default([]),
@@ -30,7 +30,7 @@ const defaultSocio: SocioForm = {
   nombre: '', apellidoPaterno: '', apellidoMaterno: '',
   ci: '', telefono: '', email: '', ocupacion: '', direccion: '',
   fechaNac: '', fechaIng: '', fechaAlta: '',
-  tipoAporteId: '',
+  aporteIds: [],
   estadoId: '', grupoPrimarioId: '', grupoAdicionalIds: [],
 };
 
@@ -71,10 +71,45 @@ function GrupoChips({ socio, grupos }: { socio: Socio; grupos: Grupo[] }) {
   );
 }
 
+/**
+ * Chips de aportes: directos (aporteIds → verde) + heredados read-only
+ * del grupo fuente (ámbar, con la leyenda "vía {grupoNombre}").
+ */
+function AporteChips({ socio, aportes }: { socio: Socio; aportes: Aporte[] }) {
+  const activos = selectAportesActivos(aportes);
+  const directos = socio.aporteIds
+    .map((id) => activos.find((a) => a.id === id))
+    .filter((a): a is Aporte => Boolean(a));
+  const heredados = socio.aportesInherited ?? [];
+  if (directos.length === 0 && heredados.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {directos.map((a) => (
+        <span
+          key={a.id}
+          className="inline-flex items-center whitespace-nowrap rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-700"
+        >
+          {a.nombre}
+        </span>
+      ))}
+      {heredados.map((h) => (
+        <span
+          key={h.id}
+          title={`Heredado del grupo ${h.grupoNombre}`}
+          className="inline-flex items-center whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-700"
+        >
+          {h.nombre}
+          <span className="ml-1 text-[10px] font-medium uppercase text-amber-500">vía {h.grupoNombre}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function SociosPage() {
   const {
     socios, sociosLoading, sociosError, fetchSocios, createSocio, updateSocio, bajaSocio,
-    estadosSocio, grupos, tiposAporte, fetchConfig,
+    estadosSocio, grupos, aportes, fetchConfig,
   } = useAppStore();
   const [search, setSearch] = useState('');
   const [estadoFilter, setEstadoFilter] = useState('');
@@ -125,7 +160,7 @@ export default function SociosPage() {
   async function onSubmit(data: SocioForm) {
     const payload = {
       ...data,
-      tipoAporteId: data.tipoAporteId || undefined,
+      aporteIds: data.aporteIds ?? [],
       estadoId: data.estadoId || editing?.estadoId || undefined,
       grupoPrimarioId: data.grupoPrimarioId || undefined,
       grupoAdicionalIds: data.grupoAdicionalIds ?? [],
@@ -157,6 +192,12 @@ export default function SociosPage() {
     form.setValue('grupoAdicionalIds', next);
   }
 
+  function toggleAporte(id: string) {
+    const current = form.getValues('aporteIds');
+    const next = current.includes(id) ? current.filter((a) => a !== id) : [...current, id];
+    form.setValue('aporteIds', next);
+  }
+
   async function handleBaja() {
     if (!bajaTarget || !bajaMotivo.trim()) return;
     setBajando(true);
@@ -172,6 +213,8 @@ export default function SociosPage() {
   }
 
   const adicionalIds = form.watch('grupoAdicionalIds');
+  const aporteIds = form.watch('aporteIds');
+  const aportesActivos = selectAportesActivos(aportes);
 
   return (
     <div>
@@ -235,7 +278,7 @@ export default function SociosPage() {
                 <th className="px-4 py-3">Teléfono</th>
                 <th className="px-4 py-3">Estado</th>
                 <th className="px-4 py-3">Grupos</th>
-                <th className="px-4 py-3">Aporte Base</th>
+                <th className="px-4 py-3">Aportes</th>
                 <th className="px-4 py-3">Acciones</th>
               </tr>
             </thead>
@@ -252,10 +295,7 @@ export default function SociosPage() {
                     <GrupoChips socio={s} grupos={grupos} />
                   </td>
                   <td className="px-4 py-3">
-                    <span className="font-medium">Bs {s.aporteBase.toFixed(2)}</span>
-                    {s.tipoAporteNombre && (
-                      <span className="ml-1 text-xs text-gray-400">({s.tipoAporteNombre})</span>
-                    )}
+                    <AporteChips socio={s} aportes={aportes} />
                   </td>
                   <td className="flex flex-wrap gap-2 px-4 py-3">
                     <button
@@ -304,14 +344,11 @@ export default function SociosPage() {
                   <dt className="text-gray-500">Teléfono</dt>
                   <dd>{s.telefono || '—'}</dd>
                 </div>
-                <div className="flex justify-between gap-2">
-                  <dt className="text-gray-500">Aporte Base</dt>
-                  <dd>
-                    Bs {s.aporteBase.toFixed(2)}
-                    {s.tipoAporteNombre && <span className="ml-1 text-xs text-gray-400">({s.tipoAporteNombre})</span>}
-                  </dd>
-                </div>
               </dl>
+              <div className="mt-2">
+                <p className="mb-1 text-xs font-medium text-gray-500">Aportes</p>
+                <AporteChips socio={s} aportes={aportes} />
+              </div>
               <div className="mt-2">
                 <GrupoChips socio={s} grupos={grupos} />
               </div>
@@ -413,13 +450,33 @@ export default function SociosPage() {
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className={labelCls}>Tipo de Aporte</label>
-                  <select {...form.register('tipoAporteId')} className={inputCls}>
-                    <option value="">(activo por defecto)</option>
-                    {selectTiposAporteActivos(tiposAporte).map((t) => (
-                      <option key={t.id} value={t.id}>● {t.nombre} — Bs {t.montoBase.toFixed(2)}</option>
-                    ))}
-                  </select>
+                  <label className={labelCls}>Aportes asignados</label>
+                  <div className="flex min-h-10 flex-wrap gap-2 rounded-lg border border-gray-300 p-2">
+                    {aportesActivos.length === 0 && (
+                      <span className="text-xs text-gray-400">No hay aportes activos configurados</span>
+                    )}
+                    {aportesActivos.map((a) => {
+                      const selected = aporteIds.includes(a.id);
+                      return (
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() => toggleAporte(a.id)}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
+                            selected
+                              ? 'bg-blue-600 text-white'
+                              : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          {a.nombre}
+                          {selected && <span aria-hidden>×</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">
+                    {aporteIds.length} aporte(s) asignado(s)
+                  </p>
                 </div>
                 <div>
                   <label className={labelCls}>Estado</label>
@@ -507,14 +564,12 @@ export default function SociosPage() {
               <div className="flex justify-between gap-3"><dt className="text-gray-500">Fec. Nac.</dt><dd>{ficha.fechaNac || '—'}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-gray-500">Fec. Ingreso</dt><dd>{ficha.fechaIng || '—'}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-gray-500">Fec. Alta</dt><dd>{ficha.fechaAlta || '—'}</dd></div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-gray-500">Aporte Base</dt>
-                <dd>
-                  Bs {ficha.aporteBase.toFixed(2)}
-                  {ficha.tipoAporteNombre && <span className="ml-1 text-xs text-gray-400">({ficha.tipoAporteNombre})</span>}
-                </dd>
-              </div>
             </dl>
+
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-medium text-gray-500">Aportes</p>
+              <AporteChips socio={ficha} aportes={aportes} />
+            </div>
 
             <div className="mt-3">
               <p className="mb-1 text-xs font-medium text-gray-500">Grupos</p>
