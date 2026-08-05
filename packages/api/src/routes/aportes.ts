@@ -2,93 +2,166 @@ import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, getTableColumns, lte, gte, or, inArray } from 'drizzle-orm';
 import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
-import { resolverMonto } from '../lib/tipos-aporte';
+import { aporteDefPorId, mesesDefinicion, socioHoldsAporte } from '../lib/aportes';
+import type { Aporte } from '@otb/core';
 
 const aportes = new Hono();
 
-type SocioElegible = { id: string; estadoId: string | null; tipoAporteId: string | null };
-type AporteCreado = { id: string; socioId: string; mes: number | undefined; gestion: number; tipo: string; montoBase: number };
+type SocioParaGenerar = { id: string; estadoId: string | null; grupoPrimarioId: string | null };
+type AporteCreado = {
+  id: string;
+  socioId: string;
+  aporteId: string | null;
+  mes: number;
+  gestion: number;
+  tipo: string;
+  montoBase: number;
+};
 type TxAportes = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
- * D6: genera los registros de aporte para la lista de socios permitidos dentro
- * de la transacción abierta. Compartido por POST /bulk y POST /bulk/all para
- * garantizar exactamente el mismo patrón de creación (anual→12, mensual→N,
- * unico/extra→1) y la misma regla de override (D4).
+ * D8/D9: NO existe override manual — `monto` y `tipo` en el body se rechazan
+ * con 400 (la generación es definition-driven: monto = definición.monto,
+ * tipo = definición.recurrencia).
+ */
+function rechazarOverride(body: Record<string, unknown>): { error: string; status: 400 } | null {
+  if (body.monto !== undefined || body.tipo !== undefined) {
+    return { error: 'El monto y el tipo derivan de la definición del aporte (no se acepta override)', status: 400 };
+  }
+  return null;
+}
+
+/**
+ * `gestion` debe ser un año válido; `mes` (opcional, cota inferior para
+ * `mensual`) debe ser 1..12 cuando se envía.
+ */
+function validarGestionMes(body: Record<string, unknown>): { gestion: number; mes?: number } | { error: string; status: 400 } {
+  const gestion = Number(body.gestion ?? new Date().getFullYear());
+  if (!Number.isInteger(gestion) || gestion <= 0) {
+    return { error: 'gestion is invalid', status: 400 };
+  }
+
+  let mes: number | undefined;
+  if (body.mes !== undefined && body.mes !== null) {
+    mes = Number(body.mes);
+    if (!Number.isInteger(mes) || mes < 1 || mes > 12) {
+      return { error: 'mes must be between 1 and 12', status: 400 };
+    }
+  }
+
+  return { gestion, mes };
+}
+
+/**
+ * Valida que TODAS las definiciones pedidas existan y estén activas (400 si no).
+ * Devuelve la lista de definiciones para generar.
+ */
+function validarDefinicionesActivas(aporteIds: string[]): Aporte[] | { error: string; status: 400 } {
+  const definiciones: Aporte[] = [];
+  for (const id of aporteIds) {
+    const def = aporteDefPorId(id);
+    if (!def) return { error: `La definición de aporte "${id}" no existe`, status: 400 };
+    if (def.activo !== 1) return { error: `La definición de aporte "${id}" está inactiva`, status: 400 };
+    definiciones.push(def);
+  }
+  return definiciones;
+}
+
+// Meses de generación según la recurrencia de la definición (D8):
+// - anual → [1..12] (ignora ventana y `mes`);
+// - mensual → mesesDefinicion(def, gestion, mes?) (ventana ∩ gestión, cota inferior opcional);
+// - unico/extraordinario → [mes ?? 1].
+function mesesParaDefinicion(def: Aporte, gestion: number, mes?: number): number[] {
+  if (def.recurrencia === 'anual') {
+    return Array.from({ length: 12 }, (_, i) => i + 1);
+  }
+  if (def.recurrencia === 'mensual') {
+    return mesesDefinicion(def, gestion, mes);
+  }
+  return [mes ?? 1];
+}
+
+/** Asignaciones directas batch: socioId → aporteIds (desde socio_aportes). */
+function aportesDirectosPorSocio(ids: string[]): Map<string, string[]> {
+  const mapa = new Map<string, string[]>();
+  if (ids.length === 0) return mapa;
+
+  const filas = db
+    .select({ socioId: schema.socioAportes.socioId, aporteId: schema.socioAportes.aporteId })
+    .from(schema.socioAportes)
+    .where(inArray(schema.socioAportes.socioId, ids))
+    .all();
+  for (const f of filas) {
+    const arr = mapa.get(f.socioId) ?? [];
+    arr.push(f.aporteId);
+    mapa.set(f.socioId, arr);
+  }
+  return mapa;
+}
+
+/** Grupos adicionales batch: socioId → grupoIds (desde socio_grupos). */
+function gruposAdicionalesPorSocio(ids: string[]): Map<string, string[]> {
+  const mapa = new Map<string, string[]>();
+  if (ids.length === 0) return mapa;
+
+  const filas = db
+    .select({ socioId: schema.socioGrupos.socioId, grupoId: schema.socioGrupos.grupoId })
+    .from(schema.socioGrupos)
+    .where(inArray(schema.socioGrupos.socioId, ids))
+    .all();
+  for (const f of filas) {
+    const arr = mapa.get(f.socioId) ?? [];
+    arr.push(f.grupoId);
+    mapa.set(f.socioId, arr);
+  }
+  return mapa;
+}
+
+/**
+ * Genera los registros de aporte DENTRO de la transacción abierta. Compartido
+ * por POST /, /bulk y /bulk/all (D8): por cada (socio × definición que el socio
+ * "holds" — directa vía socio_aportes O heredada por grupo vía socioHoldsAporte)
+ * inserta `mesesParaDefinicion(def)` registros con monto = def.monto (snapshot
+ * → monto_base), tipo = def.recurrencia (snapshot → tipo) y aporte_id = def.id.
  */
 function generarAportes(
   tx: TxAportes,
-  socios: SocioElegible[],
-  tipo: string,
+  socios: SocioParaGenerar[],
+  definiciones: Aporte[],
+  directos: Map<string, string[]>,
+  gruposAdicionales: Map<string, string[]>,
   gestion: number,
-  mesInicial: number,
-  meses: number,
-  override: number | undefined,
+  mes?: number,
 ): AporteCreado[] {
   const items: AporteCreado[] = [];
 
   for (const socio of socios) {
-    // D6/D4: monto derivado del tipo del socio; override SOLO unico/extraordinario.
-    // mensual/anual SIEMPRE derivan (un `monto` del cliente se ignora).
-    const montoBase = resolverMonto(socio, tipo, override);
+    const directosSocio = directos.get(socio.id) ?? [];
+    const gruposSocio = gruposAdicionales.get(socio.id) ?? [];
 
-    if (tipo === 'anual') {
-      // FIX bug absorvido: anual SIEMPRE 12 registros (enero-diciembre),
-      // IGNORANDO body.meses (antes generaba body.meses registros).
-      for (let m = 1; m <= 12; m++) {
+    for (const def of definiciones) {
+      if (!socioHoldsAporte({ aporteIds: directosSocio, grupoPrimarioId: socio.grupoPrimarioId }, def, gruposSocio)) {
+        continue;
+      }
+
+      for (const m of mesesParaDefinicion(def, gestion, mes)) {
         const id = crypto.randomUUID();
         tx.insert(schema.aportes)
           .values({
             id,
             socioId: socio.id,
+            aporteId: def.id,
             mes: m,
             gestion,
-            tipo,
-            montoBase,
+            tipo: def.recurrencia,
+            montoBase: def.monto,
             montoPagado: 0,
-            saldoPendiente: montoBase,
+            saldoPendiente: def.monto,
             estado: 'pendiente',
           })
           .run();
-        items.push({ id, socioId: socio.id, mes: m, gestion, tipo, montoBase });
+        items.push({ id, socioId: socio.id, aporteId: def.id, mes: m, gestion, tipo: def.recurrencia, montoBase: def.monto });
       }
-    } else if (tipo === 'mensual') {
-      // mensual = N registros desde el mes inicial (body.meses, default 1)
-      for (let i = 0; i < meses; i++) {
-        const id = crypto.randomUUID();
-        const mes = mesInicial + i;
-        tx.insert(schema.aportes)
-          .values({
-            id,
-            socioId: socio.id,
-            mes,
-            gestion,
-            tipo,
-            montoBase,
-            montoPagado: 0,
-            saldoPendiente: montoBase,
-            estado: 'pendiente',
-          })
-          .run();
-        items.push({ id, socioId: socio.id, mes, gestion, tipo, montoBase });
-      }
-    } else {
-      // unico / extraordinario → 1 registro
-      const id = crypto.randomUUID();
-      tx.insert(schema.aportes)
-        .values({
-          id,
-          socioId: socio.id,
-          mes: mesInicial,
-          gestion,
-          tipo,
-          montoBase,
-          montoPagado: 0,
-          saldoPendiente: montoBase,
-          estado: 'pendiente',
-        })
-        .run();
-      items.push({ id, socioId: socio.id, mes: mesInicial, gestion, tipo, montoBase });
     }
   }
 
@@ -132,27 +205,33 @@ aportes.get('/', (c) => {
 aportes.post('/bulk', async (c) => {
   const body = await c.req.json();
 
-  if (!body.socioIds?.length) {
+  const override = rechazarOverride(body);
+  if (override) return c.json({ error: override.error }, override.status);
+
+  if (!Array.isArray(body.socioIds) || body.socioIds.length === 0) {
     return c.json({ error: 'socioIds (array) is required' }, 400);
   }
+  if (!Array.isArray(body.aporteIds) || body.aporteIds.length === 0) {
+    return c.json({ error: 'aporteIds (array) is required' }, 400);
+  }
 
-  const socioIds: string[] = body.socioIds;
-  const tipo = body.tipo ?? 'mensual';
-  const gestion = Number(body.gestion ?? new Date().getFullYear());
-  const mesInicial = body.mes ? Number(body.mes) : new Date().getMonth() + 1;
-  const meses = body.meses ? Number(body.meses) : 1;
-  const override = body.monto !== undefined ? Number(body.monto) : undefined;
+  const gv = validarGestionMes(body);
+  if ('error' in gv) return c.json({ error: gv.error }, gv.status);
 
-  // Enforcement: excluir socios cuyo estado no permite 'aportes'
+  const definiciones = validarDefinicionesActivas(body.aporteIds.map(String));
+  if ('error' in definiciones) return c.json({ error: definiciones.error }, definiciones.status);
+
+  // Enforcement por estado (D9): NO hardcode `estado='activo'`; se excluyen los
+  // socios cuyo estado no permite la acción 'aportes'.
   const permisos = cargarPermisosPorEstado();
   const socios = db
     .select({
       id: schema.socios.id,
       estadoId: schema.socios.estadoId,
-      tipoAporteId: schema.socios.tipoAporteId,
+      grupoPrimarioId: schema.socios.grupoPrimarioId,
     })
     .from(schema.socios)
-    .where(inArray(schema.socios.id, socioIds))
+    .where(inArray(schema.socios.id, body.socioIds.map(String)))
     .all();
   const permitidos = socios.filter((s) => permite(permisos, s.estadoId, 'aportes'));
 
@@ -160,8 +239,12 @@ aportes.post('/bulk', async (c) => {
     return c.json({ error: 'Ningún socio puede participar en esta acción en su estado actual' }, 400);
   }
 
+  const ids = permitidos.map((s) => s.id);
+  const directos = aportesDirectosPorSocio(ids);
+  const grupos = gruposAdicionalesPorSocio(ids);
+
   const created = db.transaction((tx) => {
-    return generarAportes(tx, permitidos, tipo, gestion, mesInicial, meses, override);
+    return generarAportes(tx, permitidos, definiciones, directos, grupos, gv.gestion, gv.mes);
   });
 
   return c.json({ count: created.length, items: created }, 201);
@@ -170,20 +253,27 @@ aportes.post('/bulk', async (c) => {
 aportes.post('/bulk/all', async (c) => {
   const body = await c.req.json();
 
-  const tipo = body.tipo ?? 'mensual';
-  const gestion = Number(body.gestion ?? new Date().getFullYear());
-  const mesInicial = body.mes ? Number(body.mes) : new Date().getMonth() + 1;
-  const meses = body.meses ? Number(body.meses) : 1;
-  const override = body.monto !== undefined ? Number(body.monto) : undefined;
+  const override = rechazarOverride(body);
+  if (override) return c.json({ error: override.error }, override.status);
 
-  // Enforcement por estado (D5): NO hardcode `estado='activo'`, se resuelven
-  // TODOS los socios cuyo estado permite la acción 'aportes'.
+  if (!Array.isArray(body.aporteIds) || body.aporteIds.length === 0) {
+    return c.json({ error: 'aporteIds (array) is required' }, 400);
+  }
+
+  const gv = validarGestionMes(body);
+  if ('error' in gv) return c.json({ error: gv.error }, gv.status);
+
+  const definiciones = validarDefinicionesActivas(body.aporteIds.map(String));
+  if ('error' in definiciones) return c.json({ error: definiciones.error }, definiciones.status);
+
+  // Enforcement por estado (D9): se resuelven TODOS los socios cuyo estado
+  // permite la acción 'aportes'.
   const permisos = cargarPermisosPorEstado();
   const todos = db
     .select({
       id: schema.socios.id,
       estadoId: schema.socios.estadoId,
-      tipoAporteId: schema.socios.tipoAporteId,
+      grupoPrimarioId: schema.socios.grupoPrimarioId,
     })
     .from(schema.socios)
     .all();
@@ -193,8 +283,12 @@ aportes.post('/bulk/all', async (c) => {
     return c.json({ error: 'Ningún socio puede participar en esta acción en su estado actual' }, 400);
   }
 
+  const ids = permitidos.map((s) => s.id);
+  const directos = aportesDirectosPorSocio(ids);
+  const grupos = gruposAdicionalesPorSocio(ids);
+
   const created = db.transaction((tx) => {
-    return generarAportes(tx, permitidos, tipo, gestion, mesInicial, meses, override);
+    return generarAportes(tx, permitidos, definiciones, directos, grupos, gv.gestion, gv.mes);
   });
 
   return c.json({ count: created.length, items: created }, 201);
@@ -240,47 +334,75 @@ aportes.get('/:id/pagos', (c) => {
   return c.json(pagos);
 });
 
+// Generación individual definition-driven (D8): body { socioId, aporteId, gestion, mes? }.
+// El socio debe existir (404), su estado debe permitir 'aportes' (409) y debe
+// "hold" la definición (directa o heredada por grupo, 400 si no).
 aportes.post('/', async (c) => {
   const body = await c.req.json();
+
+  const override = rechazarOverride(body);
+  if (override) return c.json({ error: override.error }, override.status);
 
   if (!body.socioId) {
     return c.json({ error: 'socioId is required' }, 400);
   }
+  if (!body.aporteId) {
+    return c.json({ error: 'aporteId is required' }, 400);
+  }
+
+  const gv = validarGestionMes(body);
+  if ('error' in gv) return c.json({ error: gv.error }, gv.status);
 
   const permisos = cargarPermisosPorEstado();
   const socio = db
-    .select({ estadoId: schema.socios.estadoId, tipoAporteId: schema.socios.tipoAporteId })
+    .select({
+      id: schema.socios.id,
+      estadoId: schema.socios.estadoId,
+      grupoPrimarioId: schema.socios.grupoPrimarioId,
+    })
     .from(schema.socios)
-    .where(eq(schema.socios.id, body.socioId))
+    .where(eq(schema.socios.id, String(body.socioId)))
     .get();
 
   if (!socio) return c.json({ error: 'Socio not found' }, 404);
   if (!permite(permisos, socio.estadoId, 'aportes')) return c.json(ERROR_PERMISO, 409);
 
-  // D6/D4: monto derivado del tipo del socio; `monto` (override) SOLO se honra
-  // para unico/extraordinario. `montoBase` legacy del cliente se ignora (derivado).
-  const tipo = body.tipo ?? 'mensual';
-  const montoBase = resolverMonto(socio, tipo, body.monto !== undefined ? Number(body.monto) : undefined);
-  const gestion = Number(body.gestion ?? new Date().getFullYear());
-  const mes = body.mes ? Number(body.mes) : new Date().getMonth() + 1;
+  const def = aporteDefPorId(String(body.aporteId));
+  if (!def) return c.json({ error: `La definición de aporte "${body.aporteId}" no existe` }, 400);
+  if (def.activo !== 1) return c.json({ error: `La definición de aporte "${body.aporteId}" está inactiva` }, 400);
 
-  const result = db
-    .insert(schema.aportes)
-    .values({
-      id: crypto.randomUUID(),
-      socioId: body.socioId,
-      mes,
-      gestion,
-      tipo,
-      montoBase,
-      montoPagado: 0,
-      saldoPendiente: montoBase,
-      estado: 'pendiente',
-    })
-    .returning()
-    .get();
+  // El socio debe "hold" la definición: asignación directa (socio_aportes) O
+  // heredada por grupo (socioHoldsAporte con primario + adicionales).
+  const directos = db
+    .select({ aporteId: schema.socioAportes.aporteId })
+    .from(schema.socioAportes)
+    .where(eq(schema.socioAportes.socioId, socio.id))
+    .all()
+    .map((r) => r.aporteId);
+  const gruposAdicionales = db
+    .select({ grupoId: schema.socioGrupos.grupoId })
+    .from(schema.socioGrupos)
+    .where(eq(schema.socioGrupos.socioId, socio.id))
+    .all()
+    .map((r) => r.grupoId);
 
-  return c.json(result, 201);
+  if (!socioHoldsAporte({ aporteIds: directos, grupoPrimarioId: socio.grupoPrimarioId }, def, gruposAdicionales)) {
+    return c.json({ error: 'El socio no tiene asignado este aporte' }, 400);
+  }
+
+  const created = db.transaction((tx) => {
+    return generarAportes(
+      tx,
+      [socio],
+      [def],
+      new Map([[socio.id, directos]]),
+      new Map([[socio.id, gruposAdicionales]]),
+      gv.gestion,
+      gv.mes,
+    );
+  });
+
+  return c.json({ count: created.length, items: created }, 201);
 });
 
 aportes.post('/:id/pagar', async (c) => {
