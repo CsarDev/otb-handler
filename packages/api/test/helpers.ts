@@ -108,6 +108,11 @@ export async function requestJson(
  * Crea un socio por API y devuelve la respuesta 201. Asigna por defecto la
  * definición `ap-mensual` (modelo corregido: multiselect `aporteIds`); pasar
  * `aporteIds: []` crea un socio sin asignaciones directas.
+ *
+ * NOTA (D16): el guardado de socio ahora genera los cobros de la gestión actual
+ * en la misma transacción. Los tests de generación manual deben apuntar a
+ * gestions pasadas explícitas (p.ej. 2025) o a definiciones cuya ventana no
+ * cubre el año actual, para que los endpoints manuales tengan filas que crear.
  */
 export function crearSocio(overrides: Record<string, unknown> = {}) {
   const { aporteIds = [IDS.apMensual], ...rest } = overrides;
@@ -132,18 +137,24 @@ export async function crearGrupo(nombre = 'Grupo A'): Promise<string> {
 }
 
 /**
- * Crea una definición de aporte por API y devuelve el catálogo completo (201).
- * Body por defecto válido; los tests pasan overrides (`id`, `monto`, ...).
+ * Crea una definición de aporte por API y devuelve la DEFINICIÓN creada (201).
+ * La respuesta de POST es `{ definiciones, generados }` (D15): la definición
+ * nueva se localiza en `definiciones` por su nombre. Los ids ahora los genera
+ * el server (UUID, D14) — los overrides con `id` se IGNORAN y las suites NO
+ * deben hardcodear ids.
  */
-export async function crearDefinicion(overrides: Record<string, unknown> = {}): Promise<any[]> {
+export async function crearDefinicion(overrides: Record<string, unknown> = {}): Promise<any> {
+  const nombre = (overrides.nombre ?? 'Definición Test') as string;
   const { status, data } = await requestJson('/api/aportes-definicion', {
     method: 'POST',
-    body: { nombre: 'Definición Test', monto: 100, ...overrides },
+    body: { nombre, monto: 100, ...overrides },
   });
   if (status !== 201) {
     throw new Error(`crearDefinicion falló (${status}): ${JSON.stringify(data)}`);
   }
-  return data as any[];
+  const def = (data.definiciones as any[]).find((d: any) => d.nombre === nombre);
+  if (!def) throw new Error(`La definición "${nombre}" no aparece en la respuesta`);
+  return def;
 }
 
 // Ids estables del catálogo corregido (fuente: packages/db/src/catalogo.ts).
