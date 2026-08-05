@@ -3,6 +3,8 @@ import type {
   Socio,
   SocioInput,
   Aporte,
+  AporteInput,
+  AporteRegistro,
   Multa,
   Movimiento,
   Egreso,
@@ -12,6 +14,7 @@ import type {
   OTBConfig,
   BalanceReport,
   BulkAporteRequest,
+  CrearAporteRequest,
   LibroDiarioEntry,
   ResumenSocioReport,
   EstadoSocio,
@@ -20,8 +23,6 @@ import type {
   EstadoSocioInput,
   AccionSocioInput,
   GrupoInput,
-  TipoAporte,
-  TipoAporteInput,
 } from '@otb/core';
 
 const BASE = '/api';
@@ -70,7 +71,7 @@ type MultaFilters = {
 };
 type EgresoFilters = { categoria?: string; fechaDesde?: string; fechaHasta?: string };
 
-type AporteBulkResult = { count: number; items: Aporte[] };
+type AporteBulkResult = { count: number; items: AporteRegistro[] };
 
 type DashboardData = {
   totalSocios: number;
@@ -99,12 +100,12 @@ type AppState = {
   deleteSocio: (id: string) => Promise<void>;
   bajaSocio: (id: string, motivo: string) => Promise<Socio>;
 
-  aportes: Aporte[];
-  aportesLoading: boolean;
-  aportesError: string | null;
-  fetchAportes: (filters?: AporteFilters) => Promise<void>;
-  createAporte: (data: Partial<Aporte>) => Promise<Aporte>;
-  pagarAporte: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Aporte>;
+  aporteRegistros: AporteRegistro[];
+  aporteRegistrosLoading: boolean;
+  aporteRegistrosError: string | null;
+  fetchAporteRegistros: (filters?: AporteFilters) => Promise<void>;
+  createAporte: (data: CrearAporteRequest) => Promise<AporteBulkResult>;
+  pagarAporte: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<AporteRegistro>;
 
   multas: Multa[];
   multasLoading: boolean;
@@ -113,7 +114,7 @@ type AppState = {
   createMulta: (data: Partial<Multa>) => Promise<Multa>;
   pagarMulta: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Multa>;
   anularMulta: (id: string, razon: string) => Promise<Multa>;
-  anularAporte: (id: string, razon: string) => Promise<Aporte>;
+  anularAporte: (id: string, razon: string) => Promise<AporteRegistro>;
 
   egresos: Egreso[];
   egresosLoading: boolean;
@@ -142,9 +143,9 @@ type AppState = {
   estadosSocio: EstadoSocio[];
   accionesSocio: AccionSocio[];
   grupos: Grupo[];
-  tiposAporte: TipoAporte[];
-  tiposAporteLoading: boolean;
-  tiposAporteError: string | null;
+  aportes: Aporte[];
+  aportesLoading: boolean;
+  aportesError: string | null;
   configLoading: boolean;
   configError: string | null;
   fetchConfig: () => Promise<void>;
@@ -161,12 +162,12 @@ type AppState = {
   addGrupo: (data: GrupoInput) => Promise<void>;
   updateGrupo: (id: string, data: Partial<GrupoInput>) => Promise<void>;
   removeGrupo: (id: string) => Promise<void>;
-  fetchTiposAporte: () => Promise<void>;
-  addTipoAporte: (data: TipoAporteInput) => Promise<void>;
-  updateTipoAporte: (id: string, data: Partial<TipoAporteInput>) => Promise<void>;
-  removeTipoAporte: (id: string) => Promise<void>;
+  fetchAportesDef: () => Promise<void>;
+  addAporte: (data: AporteInput) => Promise<void>;
+  updateAporte: (id: string, data: Partial<AporteInput>) => Promise<void>;
+  removeAporte: (id: string) => Promise<void>;
   createAportesBulk: (payload: BulkAporteRequest) => Promise<AporteBulkResult>;
-  createAportesBulkAll: (payload: Omit<BulkAporteRequest, 'socioIds'>) => Promise<AporteBulkResult>;
+  createAportesBulkAll: (payload: BulkAporteRequest) => Promise<AporteBulkResult>;
   fetchPagosAporte: (id: string) => Promise<Movimiento[]>;
 
   balanceReport: BalanceReport | null;
@@ -235,11 +236,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     return socio;
   },
 
-  aportes: [],
-  aportesLoading: false,
-  aportesError: null,
-  fetchAportes: async (filters) => {
-    set({ aportesLoading: true, aportesError: null });
+  aporteRegistros: [],
+  aporteRegistrosLoading: false,
+  aporteRegistrosError: null,
+  fetchAporteRegistros: async (filters) => {
+    set({ aporteRegistrosLoading: true, aporteRegistrosError: null });
     try {
       const params = new URLSearchParams();
       if (filters?.socioId) params.set('socioId', filters.socioId);
@@ -252,20 +253,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (filters?.estadoId) params.set('estadoId', filters.estadoId);
       if (filters?.grupoId) params.set('grupoId', filters.grupoId);
       const qs = params.toString() ? `?${params}` : '';
-      const data = await request<Aporte[]>(`/aportes${qs}`);
-      set({ aportes: data, aportesLoading: false });
+      const data = await request<AporteRegistro[]>(`/aportes${qs}`);
+      set({ aporteRegistros: data, aporteRegistrosLoading: false });
     } catch (e) {
-      set({ aportesError: (e as Error).message, aportesLoading: false });
+      set({ aporteRegistrosError: (e as Error).message, aporteRegistrosLoading: false });
     }
   },
   createAporte: async (data) => {
-    const aporte = await request<Aporte>('/aportes', { method: 'POST', body: JSON.stringify(data) });
-    set({ aportes: [...get().aportes, aporte] });
-    return aporte;
+    // Generación simple definition-driven: { socioId, aporteId, gestion, mes? }
+    return request<AporteBulkResult>('/aportes', { method: 'POST', body: JSON.stringify(data) });
   },
   pagarAporte: async (id, data) => {
-    const aporte = await request<Aporte>(`/aportes/${id}/pagar`, { method: 'POST', body: JSON.stringify(data) });
-    set({ aportes: get().aportes.map((a) => (a.id === id ? aporte : a)) });
+    const aporte = await request<AporteRegistro>(`/aportes/${id}/pagar`, { method: 'POST', body: JSON.stringify(data) });
+    set({ aporteRegistros: get().aporteRegistros.map((a) => (a.id === id ? aporte : a)) });
     return aporte;
   },
 
@@ -307,8 +307,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     return multa;
   },
   anularAporte: async (id: string, razon: string) => {
-    const aporte = await request<Aporte>(`/aportes/${id}/anular`, { method: 'POST', body: JSON.stringify({ razon }) });
-    set({ aportes: get().aportes.map((a) => (a.id === id ? aporte : a)) });
+    const aporte = await request<AporteRegistro>(`/aportes/${id}/anular`, { method: 'POST', body: JSON.stringify({ razon }) });
+    set({ aporteRegistros: get().aporteRegistros.map((a) => (a.id === id ? aporte : a)) });
     return aporte;
   },
 
@@ -400,21 +400,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   estadosSocio: [],
   accionesSocio: [],
   grupos: [],
-  tiposAporte: [],
-  tiposAporteLoading: false,
-  tiposAporteError: null,
+  aportes: [],
+  aportesLoading: false,
+  aportesError: null,
   configLoading: false,
   configError: null,
   fetchConfig: async () => {
     set({ configLoading: true, configError: null });
     try {
-      const [config, tiposActividad, estadosSocio, accionesSocio, grupos, tiposAporte] = await Promise.all([
+      const [config, tiposActividad, estadosSocio, accionesSocio, grupos, aportes] = await Promise.all([
         request<OTBConfig>('/config').catch(() => null),
         request<TipoActividad[]>('/tipos-actividad').catch(() => []),
         request<EstadoSocio[]>('/estados-socio').catch(() => []),
         request<AccionSocio[]>('/acciones-socio').catch(() => []),
         request<Grupo[]>('/grupos').catch(() => []),
-        request<TipoAporte[]>('/tipos-aporte').catch(() => []),
+        request<Aporte[]>('/aportes-definicion').catch(() => []),
       ]);
       set({
         config,
@@ -422,7 +422,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         estadosSocio: Array.isArray(estadosSocio) ? estadosSocio : [],
         accionesSocio: Array.isArray(accionesSocio) ? accionesSocio : [],
         grupos: Array.isArray(grupos) ? grupos : [],
-        tiposAporte: Array.isArray(tiposAporte) ? tiposAporte : [],
+        aportes: Array.isArray(aportes) ? aportes : [],
         configLoading: false,
       });
     } catch (e) {
@@ -484,28 +484,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     const grupos = await request<Grupo[]>(`/grupos/${id}`, { method: 'DELETE' });
     set({ grupos });
   },
-  fetchTiposAporte: async () => {
-    set({ tiposAporteLoading: true, tiposAporteError: null });
+  fetchAportesDef: async () => {
+    set({ aportesLoading: true, aportesError: null });
     try {
-      const tipos = await request<TipoAporte[]>('/tipos-aporte');
-      set({ tiposAporte: Array.isArray(tipos) ? tipos : [], tiposAporteLoading: false });
+      const definiciones = await request<Aporte[]>('/aportes-definicion');
+      set({ aportes: Array.isArray(definiciones) ? definiciones : [], aportesLoading: false });
     } catch (e) {
-      set({ tiposAporteError: (e as Error).message, tiposAporteLoading: false });
+      set({ aportesError: (e as Error).message, aportesLoading: false });
     }
   },
-  addTipoAporte: async (data) => {
+  addAporte: async (data) => {
     // El endpoint devuelve el catálogo completo; se reemplaza la lista (patrón tiposActividad)
-    const tipos = await request<TipoAporte[]>('/tipos-aporte', { method: 'POST', body: JSON.stringify(data) });
-    set({ tiposAporte: tipos });
+    const definiciones = await request<Aporte[]>('/aportes-definicion', { method: 'POST', body: JSON.stringify(data) });
+    set({ aportes: definiciones });
   },
-  updateTipoAporte: async (id, data) => {
-    const tipos = await request<TipoAporte[]>(`/tipos-aporte/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-    set({ tiposAporte: tipos });
+  updateAporte: async (id, data) => {
+    const definiciones = await request<Aporte[]>(`/aportes-definicion/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    set({ aportes: definiciones });
   },
-  removeTipoAporte: async (id) => {
-    // DELETE guarda 409 cuando hay socios usando el tipo; el mensaje amigable se propaga al UI
-    const tipos = await request<TipoAporte[]>(`/tipos-aporte/${id}`, { method: 'DELETE' });
-    set({ tiposAporte: tipos });
+  removeAporte: async (id) => {
+    // DELETE guarda 409 cuando hay socios (socio_aportes) o registros (aportes.aporte_id)
+    // usando la definición; el mensaje amigable se propaga al UI.
+    const definiciones = await request<Aporte[]>(`/aportes-definicion/${id}`, { method: 'DELETE' });
+    set({ aportes: definiciones });
   },
   createAportesBulk: async (payload) => {
     return request<AporteBulkResult>('/aportes/bulk', {
@@ -513,7 +514,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       body: JSON.stringify(payload),
     });
   },
-  createAportesBulkAll: async (payload) => {
+  createAportesBulkAll: async (payload: BulkAporteRequest) => {
     // /bulk/all resuelve todos los socios permitidos; el payload NO lleva socioIds
     return request<AporteBulkResult>('/aportes/bulk/all', {
       method: 'POST',
@@ -582,20 +583,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 }));
 
 /**
- * Selector de tipos de aporte activos (activo=1), para el select de socio y la UI de config.
+ * Selector de definiciones de aporte activas (activo=1), para el multiselect de
+ * socio y la UI de aportes.
  */
-export function selectTiposAporteActivos(tipos: TipoAporte[]): TipoAporte[] {
-  return tipos.filter((t) => t.activo === 1);
-}
-
-/**
- * Derivación del monto mensual por tipo de aporte: dado el array del catálogo y el
- * tipoAporteId asignado a un socio, devuelve su `montoBase` (0 si el tipo no existe).
- */
-export function montoBaseDeTipoAporte(
-  tipos: TipoAporte[],
-  tipoAporteId: string | null | undefined,
-): number {
-  const tipo = tipos.find((t) => t.id === tipoAporteId);
-  return tipo ? tipo.montoBase : 0;
+export function selectAportesActivos(aportes: Aporte[]): Aporte[] {
+  return aportes.filter((a) => a.activo === 1);
 }
