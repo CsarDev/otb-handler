@@ -1,15 +1,14 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, like, or, inArray } from 'drizzle-orm';
-import type { Socio } from '@otb/core';
-import { tipoAporteActivoDefault, tipoAportePrimero } from '../lib/tipos-aporte';
+import type { AporteInherited, Socio } from '@otb/core';
 
 const socios = new Hono();
 
-// Columnas del socio SIN el legacy `estado` (se dropea en fase 0004),
-// más el join a estados_socio y tipos_aporte para el shape enriquecido.
-// `aporteBase` se DERIVA del montoBase del tipo asignado (no de la columna
-// legacy, que se conserva solo para lecturas legacy/UI — D2).
+// Columnas del socio SIN el legacy `estado` (se dropea en fase 0004) y SIN el
+// legacy `tipoAporteId`/`aporteBase` (modelo corregido D1): el socio ya no tiene
+// un único tipo; las asignaciones de aporte viven en `socio_aportes` (directas,
+// `aporteIds`) y la herencia por grupo se resuelve dinámicamente en lectura (D5).
 const selectSociosConEstado = () =>
   db
     .select({
@@ -25,10 +24,7 @@ const selectSociosConEstado = () =>
       fechaNac: schema.socios.fechaNac,
       fechaIng: schema.socios.fechaIng,
       fechaAlta: schema.socios.fechaAlta,
-      aporteBase: schema.tiposAporte.montoBase, // derivado del tipo (join)
       estadoId: schema.socios.estadoId,
-      tipoAporteId: schema.socios.tipoAporteId,
-      tipoAporteNombre: schema.tiposAporte.nombre,
       grupoPrimarioId: schema.socios.grupoPrimarioId,
       motivoBaja: schema.socios.motivoBaja,
       fechaBaja: schema.socios.fechaBaja,
@@ -37,8 +33,7 @@ const selectSociosConEstado = () =>
       esActivo: schema.estadosSocio.esActivo,
     })
     .from(schema.socios)
-    .leftJoin(schema.estadosSocio, eq(schema.socios.estadoId, schema.estadosSocio.id))
-    .leftJoin(schema.tiposAporte, eq(schema.socios.tipoAporteId, schema.tiposAporte.id));
+    .leftJoin(schema.estadosSocio, eq(schema.socios.estadoId, schema.estadosSocio.id));
 
 // Grupos adicionales: 2 queries batch (membresías + nombres) adjuntadas en memoria.
 // Devuelve socioId → grupos[{ id, nombre }]. Sin N+1.
@@ -75,36 +70,99 @@ function gruposPorSocio(ids: string[]): Map<string, { id: string; nombre: string
   return mapa;
 }
 
+// Asignaciones DIRECTAS de aporte: socioId → aporteIds (desde socio_aportes).
+// Query batch para listas, sin N+1.
+function aportesDirectosPorSocio(ids: string[]): Map<string, string[]> {
+  const mapa = new Map<string, string[]>();
+  if (ids.length === 0) return mapa;
+
+  const filas = db
+    .select({
+      socioId: schema.socioAportes.socioId,
+      aporteId: schema.socioAportes.aporteId,
+    })
+    .from(schema.socioAportes)
+    .where(inArray(schema.socioAportes.socioId, ids))
+    .all();
+
+  for (const f of filas) {
+    const arr = mapa.get(f.socioId) ?? [];
+    arr.push(f.aporteId);
+    mapa.set(f.socioId, arr);
+  }
+  return mapa;
+}
+
+// Aportes HEREDADOS por grupo, resueltos dinámicamente (D5): definiciones cuyo
+// `aplicaGrupoId` ∈ { grupoPrimarioId ∪ grupos adicionales } del socio, con el
+// nombre del grupo que las aplica (join a `grupos`). Batch para listas, sin N+1.
+// La dedup contra asignaciones directas se hace en `armarSocio`.
+function aportesInheritedPorSocio(
+  filas: FilaSocio[],
+  grupos: Map<string, { id: string; nombre: string }[]>,
+): Map<string, AporteInherited[]> {
+  const mapa = new Map<string, AporteInherited[]>();
+  if (filas.length === 0) return mapa;
+
+  const grupoIds = new Set<string>();
+  for (const f of filas) {
+    if (f.grupoPrimarioId) grupoIds.add(f.grupoPrimarioId);
+    for (const g of grupos.get(f.id) ?? []) grupoIds.add(g.id);
+  }
+  if (grupoIds.size === 0) return mapa;
+
+  const defs = db
+    .select({
+      id: schema.aportesDefinicion.id,
+      nombre: schema.aportesDefinicion.nombre,
+      grupoId: schema.aportesDefinicion.aplicaGrupoId,
+      grupoNombre: schema.grupos.nombre,
+    })
+    .from(schema.aportesDefinicion)
+    .innerJoin(schema.grupos, eq(schema.aportesDefinicion.aplicaGrupoId, schema.grupos.id))
+    .where(inArray(schema.aportesDefinicion.aplicaGrupoId, [...grupoIds]))
+    .all();
+
+  const defsPorGrupo = new Map<string, AporteInherited[]>();
+  for (const d of defs) {
+    if (!d.grupoId) continue;
+    const arr = defsPorGrupo.get(d.grupoId) ?? [];
+    arr.push({ id: d.id, nombre: d.nombre, grupoId: d.grupoId, grupoNombre: d.grupoNombre ?? '' });
+    defsPorGrupo.set(d.grupoId, arr);
+  }
+
+  for (const f of filas) {
+    const grupoIdsDelSocio = new Set<string>();
+    if (f.grupoPrimarioId) grupoIdsDelSocio.add(f.grupoPrimarioId);
+    for (const g of grupos.get(f.id) ?? []) grupoIdsDelSocio.add(g.id);
+
+    // dedup por id de definición: una definición aplica por un único grupo
+    const set = new Map<string, AporteInherited>();
+    for (const gid of grupoIdsDelSocio) {
+      for (const d of defsPorGrupo.get(gid) ?? []) set.set(d.id, d);
+    }
+    mapa.set(f.id, [...set.values()]);
+  }
+  return mapa;
+}
+
 type QuerySocios = ReturnType<typeof selectSociosConEstado>;
 type FilaSocio = Awaited<ReturnType<QuerySocios['all']>>[number];
 
-// El shape de salida SIEMPRE resuelve tipoAporteId/tipoAporteNombre/aporteBase:
-// - socio con tipo → valores del join;
-// - socio legacy con tipoAporteId NULL → fallback al tipo activo por defecto
-//   (escenario legacy de la spec socios-estados). Esto hace que los campos
-//   sean required en el tipo `Socio` de @otb/core.
+// El shape de salida expone las asignaciones DIRECTAS (`aporteIds`, editables)
+// y los aportes HEREDADOS por grupo (`aportesInherited`, read-only, D5).
+// La dedup es: una definición asignada directamente NO se repite en inherited.
 function armarSocio(
   fila: FilaSocio,
   grupos: Map<string, { id: string; nombre: string }[]>,
+  aporteIds: string[],
+  inherited: AporteInherited[],
 ): Socio {
-  let tipoAporteId = fila.tipoAporteId;
-  let tipoAporteNombre = fila.tipoAporteNombre;
-  let aporteBase = fila.aporteBase;
-
-  if (tipoAporteId == null || tipoAporteNombre == null || aporteBase == null) {
-    const def = tipoAporteActivoDefault() ?? tipoAportePrimero();
-    if (def) {
-      tipoAporteId = tipoAporteId ?? def.id;
-      tipoAporteNombre = tipoAporteNombre ?? def.nombre;
-      aporteBase = aporteBase ?? def.montoBase;
-    }
-  }
-
+  const directos = new Set(aporteIds);
   return {
     ...fila,
-    tipoAporteId: tipoAporteId ?? '',
-    tipoAporteNombre: tipoAporteNombre ?? '',
-    aporteBase: aporteBase ?? 0,
+    aporteIds,
+    aportesInherited: inherited.filter((i) => !directos.has(i.id)),
     esActivo: fila.esActivo ?? 0,
     grupos: grupos.get(fila.id) ?? [],
   };
@@ -140,9 +198,12 @@ socios.get('/', (c) => {
   const query = selectSociosConEstado();
   const filas = filters.length ? query.where(and(...filters)).all() : query.all();
 
-  const grupos = gruposPorSocio(filas.map((f) => f.id));
+  const ids = filas.map((f) => f.id);
+  const grupos = gruposPorSocio(ids);
+  const directos = aportesDirectosPorSocio(ids);
+  const inherited = aportesInheritedPorSocio(filas, grupos);
 
-  return c.json(filas.map((f) => armarSocio(f, grupos)));
+  return c.json(filas.map((f) => armarSocio(f, grupos, directos.get(f.id) ?? [], inherited.get(f.id) ?? [])));
 });
 
 socios.get('/:id', (c) => {
@@ -152,33 +213,45 @@ socios.get('/:id', (c) => {
   if (!fila) return c.json({ error: 'Not found' }, 404);
 
   const grupos = gruposPorSocio([id]);
-  return c.json(armarSocio(fila, grupos));
+  const directos = aportesDirectosPorSocio([id]);
+  const inherited = aportesInheritedPorSocio([fila], grupos);
+  return c.json(armarSocio(fila, grupos, directos.get(id) ?? [], inherited.get(id) ?? []));
 });
 
 // ---- Validaciones compartidas POST/PUT ----
 
-// Validación de tipoAporteId (spec aporte-types, Socio Assignment):
-// - si el body lo declara → debe existir Y estar activo (400 si no);
-// - si el body lo omite → el PRIMER tipo activo como default (D3).
-function validarTipoAporteId(body: Record<string, unknown>): { tipoAporteId: string } | { error: string; status: 400 } {
-  if (body.tipoAporteId !== undefined && body.tipoAporteId !== null) {
-    const existe = db
-      .select({ id: schema.tiposAporte.id })
-      .from(schema.tiposAporte)
-      .where(
-        and(
-          eq(schema.tiposAporte.id, String(body.tipoAporteId)),
-          eq(schema.tiposAporte.activo, 1),
-        ),
-      )
-      .get();
-    if (!existe) return { error: 'tipoAporteId is invalid or inactive', status: 400 };
-    return { tipoAporteId: String(body.tipoAporteId) };
+// Validación de `aporteIds` (spec socios-estados, multiselect):
+// - ausente/null → [] (sin asignaciones directas; NO hay default-type fallback);
+// - presente pero NO array → 400 "aporteIds must be an array";
+// - cada id debe existir en `aportes_definicion` Y estar activo (400 si no).
+function validarAporteIds(body: Record<string, unknown>): { aporteIds: string[] } | { error: string; status: 400 } {
+  if (body.aporteIds === undefined || body.aporteIds === null) {
+    return { aporteIds: [] };
+  }
+  if (!Array.isArray(body.aporteIds)) {
+    return { error: 'aporteIds must be an array', status: 400 };
   }
 
-  const defecto = tipoAporteActivoDefault();
-  if (!defecto) return { error: 'No hay un tipo de aporte activo configurado', status: 400 };
-  return { tipoAporteId: defecto.id };
+  const aporteIds = [...new Set(body.aporteIds.map(String))];
+  if (aporteIds.length === 0) return { aporteIds: [] };
+
+  const filas = db
+    .select({ id: schema.aportesDefinicion.id, activo: schema.aportesDefinicion.activo })
+    .from(schema.aportesDefinicion)
+    .where(inArray(schema.aportesDefinicion.id, aporteIds))
+    .all();
+  const activoPorId = new Map(filas.map((f) => [f.id, f.activo]));
+
+  for (const id of aporteIds) {
+    const activo = activoPorId.get(id);
+    if (activo === undefined) {
+      return { error: 'aporteIds contains an invalid aporte', status: 400 };
+    }
+    if (activo !== 1) {
+      return { error: 'aporteIds contains an inactive aporte', status: 400 };
+    }
+  }
+  return { aporteIds };
 }
 
 function validarEstadoId(body: Record<string, unknown>): { estadoId: string } | { error: string; status: 400 } {
@@ -241,7 +314,8 @@ function validarGrupos(body: Record<string, unknown>): { grupoPrimarioId?: strin
 }
 
 // Campos editables del socio (whitelist: excluye id, estadoId, grupos, baja y
-// aporteBase — el monto ya NO es escribible, deriva del tipo asignado).
+// cualquier campo legacy de aporte — el monto ya NO es escribible; los aportes
+// se asignan por `aporteIds`).
 function camposSocio(body: Record<string, unknown>): Partial<typeof schema.socios.$inferInsert> {
   const campos: Partial<typeof schema.socios.$inferInsert> = {};
   const editables = [
@@ -276,8 +350,8 @@ socios.post('/', async (c) => {
   const estado = validarEstadoId(body);
   if ('error' in estado) return c.json({ error: estado.error }, estado.status);
 
-  const tipoAporte = validarTipoAporteId(body);
-  if ('error' in tipoAporte) return c.json({ error: tipoAporte.error }, tipoAporte.status);
+  const aportes = validarAporteIds(body);
+  if ('error' in aportes) return c.json({ error: aportes.error }, aportes.status);
 
   const grupos = validarGrupos(body);
   if ('error' in grupos) return c.json({ error: grupos.error }, grupos.status);
@@ -288,7 +362,6 @@ socios.post('/', async (c) => {
     id,
     ...camposSocio(body),
     estadoId: estado.estadoId,
-    tipoAporteId: tipoAporte.tipoAporteId,
     ...(grupos.grupoPrimarioId ? { grupoPrimarioId: grupos.grupoPrimarioId } : {}),
   } as typeof schema.socios.$inferInsert;
 
@@ -300,11 +373,19 @@ socios.post('/', async (c) => {
     for (const grupoId of grupos.grupoAdicionalIds ?? []) {
       tx.insert(schema.socioGrupos).values({ socioId: id, grupoId }).run();
     }
+
+    // Asignaciones directas de aporte (multiselect, patrón socio_grupos).
+    // Ausente/vacío → [] sin filas (no hay default-type fallback).
+    for (const aporteId of aportes.aporteIds) {
+      tx.insert(schema.socioAportes).values({ socioId: id, aporteId }).run();
+    }
   });
 
   const fila = selectSociosConEstado().where(eq(schema.socios.id, id)).get()!;
   const gruposMap = gruposPorSocio([id]);
-  return c.json(armarSocio(fila, gruposMap), 201);
+  const directos = aportesDirectosPorSocio([id]);
+  const inherited = aportesInheritedPorSocio([fila], gruposMap);
+  return c.json(armarSocio(fila, gruposMap, directos.get(id) ?? [], inherited.get(id) ?? []), 201);
 });
 
 socios.put('/:id', async (c) => {
@@ -326,26 +407,23 @@ socios.put('/:id', async (c) => {
     estadoId = estado.estadoId;
   }
 
-  // tipoAporteId: igualmente parcial — si el body lo omite se PRESERVA el tipo
-  // vigente (un PUT con solo otros campos no resetea el tipo a default).
-  let tipoAporteId: string | undefined;
-  if (body.tipoAporteId !== undefined && body.tipoAporteId !== null) {
-    const tipoAporte = validarTipoAporteId(body);
-    if ('error' in tipoAporte) return c.json({ error: tipoAporte.error }, tipoAporte.status);
-    tipoAporteId = tipoAporte.tipoAporteId;
+  // aporteIds: parcial — SOLO si el body lo declara se reemplaza el set de
+  // asignaciones directas (atómico, en la misma transacción). Si se omite, se
+  // preservan las asignaciones vigentes (spec: PUT preserve).
+  let aporteIds: string[] | undefined;
+  if (body.aporteIds !== undefined) {
+    const aportes = validarAporteIds(body);
+    if ('error' in aportes) return c.json({ error: aportes.error }, aportes.status);
+    aporteIds = aportes.aporteIds;
   }
 
   db.transaction((tx) => {
     // Update parcial: campos editables + relaciones solo cuando el body los declara.
-    // Si no hay nada que actualizar (p.ej. body con solo `aporteBase`, que ya no
-    // es escribible) el `.set()` se omite → la respuesta devuelve el socio vigente
-    // sin reescribir nada (spec: "Saving a raw aporteBase" no 500).
+    // Los campos legacy (`aporteBase`/`tipoAporteId`) no son escribibles y se
+    // ignoran (spec: PUT con legacy no tiene efecto, no 500).
     const updateFields = {
       ...camposSocio(body),
-      // solo toca estadoId cuando el body lo declara (update parcial preserva el actual)
       ...(estadoId !== undefined ? { estadoId } : {}),
-      // solo toca tipoAporteId cuando el body lo declara (update parcial)
-      ...(tipoAporteId !== undefined ? { tipoAporteId } : {}),
       // conserva grupoId si no se envía
       ...(grupos.grupoPrimarioId !== undefined ? { grupoPrimarioId: grupos.grupoPrimarioId } : {}),
     };
@@ -365,11 +443,22 @@ socios.put('/:id', async (c) => {
         tx.insert(schema.socioGrupos).values({ socioId: id, grupoId }).run();
       }
     }
+
+    // Reemplazo atómico de aportes directos: SOLO cuando el body declara
+    // `aporteIds`. Si se omite, se preserva la asignación vigente.
+    if (aporteIds !== undefined) {
+      tx.delete(schema.socioAportes).where(eq(schema.socioAportes.socioId, id)).run();
+      for (const aporteId of aporteIds) {
+        tx.insert(schema.socioAportes).values({ socioId: id, aporteId }).run();
+      }
+    }
   });
 
   const fila = selectSociosConEstado().where(eq(schema.socios.id, id)).get()!;
   const gruposMap = gruposPorSocio([id]);
-  return c.json(armarSocio(fila, gruposMap));
+  const directos = aportesDirectosPorSocio([id]);
+  const inherited = aportesInheritedPorSocio([fila], gruposMap);
+  return c.json(armarSocio(fila, gruposMap, directos.get(id) ?? [], inherited.get(id) ?? []));
 });
 
 socios.post('/:id/baja', async (c) => {
@@ -405,7 +494,9 @@ socios.post('/:id/baja', async (c) => {
 
   const fila = selectSociosConEstado().where(eq(schema.socios.id, id)).get()!;
   const gruposMap = gruposPorSocio([id]);
-  return c.json(armarSocio(fila, gruposMap));
+  const directos = aportesDirectosPorSocio([id]);
+  const inherited = aportesInheritedPorSocio([fila], gruposMap);
+  return c.json(armarSocio(fila, gruposMap, directos.get(id) ?? [], inherited.get(id) ?? []));
 });
 
 // Soft delete: solo cambia estadoId → esBaja (motivoBaja/fechaBaja quedan null)
