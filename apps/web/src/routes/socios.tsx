@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -106,6 +106,23 @@ function AporteChips({ socio, aportes }: { socio: Socio; aportes: Aporte[] }) {
   );
 }
 
+/**
+ * Toast local mínimo (D22): banner fijo, auto-dismiss ~3s, sin dependencias.
+ * `role="status"` + `aria-live="polite"` para accesibilidad.
+ */
+function CobroToast({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-4 left-1/2 z-[60] w-max max-w-[90vw] -translate-x-1/2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white shadow-lg"
+    >
+      {message}
+    </div>
+  );
+}
+
 export default function SociosPage() {
   const {
     socios, sociosLoading, sociosError, fetchSocios, createSocio, updateSocio, bajaSocio,
@@ -121,7 +138,22 @@ export default function SociosPage() {
   const [bajaMotivo, setBajaMotivo] = useState('');
   const [bajando, setBajando] = useState(false);
 
+  /* ── Toast de conteo generado (D22) ── */
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
+
   const form = useForm<SocioForm>({ resolver: zodResolver(socioSchema) as any, defaultValues: defaultSocio });
+
+  /** Toast mínimo (D22): muestra el mensaje y auto-dismiss a los ~3s. */
+  function showToast(msg: string) {
+    setToast(msg);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3000);
+  }
+
+  useEffect(() => {
+    return () => window.clearTimeout(toastTimer.current);
+  }, []);
 
   useEffect(() => {
     fetchConfig();
@@ -165,13 +197,14 @@ export default function SociosPage() {
       grupoPrimarioId: data.grupoPrimarioId || undefined,
       grupoAdicionalIds: data.grupoAdicionalIds ?? [],
     };
-    if (editing) {
-      await updateSocio(editing.id, payload);
-    } else {
-      await createSocio(payload);
-    }
+    // D16: el guardado genera los cobros del set final; el API devuelve
+    // `generados.count` (solo filas NUEVAS) para el toast (D22).
+    const res = editing
+      ? await updateSocio(editing.id, payload)
+      : await createSocio(payload);
     setModalOpen(false);
     setEditing(null);
+    showToast(`Se generaron ${res.generados.count} cobro(s)`);
   }
 
   function handlePrimaryChange(id: string) {
@@ -629,6 +662,9 @@ export default function SociosPage() {
           </div>
         </div>
       )}
+
+      {/* Toast de conteo generado (D22) */}
+      <CobroToast message={toast} />
     </div>
   );
 }
