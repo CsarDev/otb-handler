@@ -2,22 +2,19 @@ import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, getTableColumns, lte, gte, or, inArray } from 'drizzle-orm';
 import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
-import { aporteDefPorId, mesesDefinicion, socioHoldsAporte } from '../lib/aportes';
-import type { Aporte } from '@otb/core';
+import {
+  aporteDefPorId,
+  mesesDefinicion,
+  socioHoldsAporte,
+  generarAportes,
+  mesesParaDefinicion,
+  aportesDirectosPorSocio,
+  gruposAdicionalesPorSocio,
+  validarGestionMes,
+  validarDefinicionesActivas,
+} from '../lib/aportes';
 
 const aportes = new Hono();
-
-type SocioParaGenerar = { id: string; estadoId: string | null; grupoPrimarioId: string | null };
-type AporteCreado = {
-  id: string;
-  socioId: string;
-  aporteId: string | null;
-  mes: number;
-  gestion: number;
-  tipo: string;
-  montoBase: number;
-};
-type TxAportes = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * D8/D9: NO existe override manual — `monto` y `tipo` en el body se rechazan
@@ -29,143 +26,6 @@ function rechazarOverride(body: Record<string, unknown>): { error: string; statu
     return { error: 'El monto y el tipo derivan de la definición del aporte (no se acepta override)', status: 400 };
   }
   return null;
-}
-
-/**
- * `gestion` debe ser un año válido; `mes` (opcional, cota inferior para
- * `mensual`) debe ser 1..12 cuando se envía.
- */
-function validarGestionMes(body: Record<string, unknown>): { gestion: number; mes?: number } | { error: string; status: 400 } {
-  const gestion = Number(body.gestion ?? new Date().getFullYear());
-  if (!Number.isInteger(gestion) || gestion <= 0) {
-    return { error: 'gestion is invalid', status: 400 };
-  }
-
-  let mes: number | undefined;
-  if (body.mes !== undefined && body.mes !== null) {
-    mes = Number(body.mes);
-    if (!Number.isInteger(mes) || mes < 1 || mes > 12) {
-      return { error: 'mes must be between 1 and 12', status: 400 };
-    }
-  }
-
-  return { gestion, mes };
-}
-
-/**
- * Valida que TODAS las definiciones pedidas existan y estén activas (400 si no).
- * Devuelve la lista de definiciones para generar.
- */
-function validarDefinicionesActivas(aporteIds: string[]): Aporte[] | { error: string; status: 400 } {
-  const definiciones: Aporte[] = [];
-  for (const id of aporteIds) {
-    const def = aporteDefPorId(id);
-    if (!def) return { error: `La definición de aporte "${id}" no existe`, status: 400 };
-    if (def.activo !== 1) return { error: `La definición de aporte "${id}" está inactiva`, status: 400 };
-    definiciones.push(def);
-  }
-  return definiciones;
-}
-
-// Meses de generación según la recurrencia de la definición (D8):
-// - anual → [1..12] (ignora ventana y `mes`);
-// - mensual → mesesDefinicion(def, gestion, mes?) (ventana ∩ gestión, cota inferior opcional);
-// - unico/extraordinario → [mes ?? 1].
-function mesesParaDefinicion(def: Aporte, gestion: number, mes?: number): number[] {
-  if (def.recurrencia === 'anual') {
-    return Array.from({ length: 12 }, (_, i) => i + 1);
-  }
-  if (def.recurrencia === 'mensual') {
-    return mesesDefinicion(def, gestion, mes);
-  }
-  return [mes ?? 1];
-}
-
-/** Asignaciones directas batch: socioId → aporteIds (desde socio_aportes). */
-function aportesDirectosPorSocio(ids: string[]): Map<string, string[]> {
-  const mapa = new Map<string, string[]>();
-  if (ids.length === 0) return mapa;
-
-  const filas = db
-    .select({ socioId: schema.socioAportes.socioId, aporteId: schema.socioAportes.aporteId })
-    .from(schema.socioAportes)
-    .where(inArray(schema.socioAportes.socioId, ids))
-    .all();
-  for (const f of filas) {
-    const arr = mapa.get(f.socioId) ?? [];
-    arr.push(f.aporteId);
-    mapa.set(f.socioId, arr);
-  }
-  return mapa;
-}
-
-/** Grupos adicionales batch: socioId → grupoIds (desde socio_grupos). */
-function gruposAdicionalesPorSocio(ids: string[]): Map<string, string[]> {
-  const mapa = new Map<string, string[]>();
-  if (ids.length === 0) return mapa;
-
-  const filas = db
-    .select({ socioId: schema.socioGrupos.socioId, grupoId: schema.socioGrupos.grupoId })
-    .from(schema.socioGrupos)
-    .where(inArray(schema.socioGrupos.socioId, ids))
-    .all();
-  for (const f of filas) {
-    const arr = mapa.get(f.socioId) ?? [];
-    arr.push(f.grupoId);
-    mapa.set(f.socioId, arr);
-  }
-  return mapa;
-}
-
-/**
- * Genera los registros de aporte DENTRO de la transacción abierta. Compartido
- * por POST /, /bulk y /bulk/all (D8): por cada (socio × definición que el socio
- * "holds" — directa vía socio_aportes O heredada por grupo vía socioHoldsAporte)
- * inserta `mesesParaDefinicion(def)` registros con monto = def.monto (snapshot
- * → monto_base), tipo = def.recurrencia (snapshot → tipo) y aporte_id = def.id.
- */
-function generarAportes(
-  tx: TxAportes,
-  socios: SocioParaGenerar[],
-  definiciones: Aporte[],
-  directos: Map<string, string[]>,
-  gruposAdicionales: Map<string, string[]>,
-  gestion: number,
-  mes?: number,
-): AporteCreado[] {
-  const items: AporteCreado[] = [];
-
-  for (const socio of socios) {
-    const directosSocio = directos.get(socio.id) ?? [];
-    const gruposSocio = gruposAdicionales.get(socio.id) ?? [];
-
-    for (const def of definiciones) {
-      if (!socioHoldsAporte({ aporteIds: directosSocio, grupoPrimarioId: socio.grupoPrimarioId }, def, gruposSocio)) {
-        continue;
-      }
-
-      for (const m of mesesParaDefinicion(def, gestion, mes)) {
-        const id = crypto.randomUUID();
-        tx.insert(schema.aportes)
-          .values({
-            id,
-            socioId: socio.id,
-            aporteId: def.id,
-            mes: m,
-            gestion,
-            tipo: def.recurrencia,
-            montoBase: def.monto,
-            montoPagado: 0,
-            saldoPendiente: def.monto,
-            estado: 'pendiente',
-          })
-          .run();
-        items.push({ id, socioId: socio.id, aporteId: def.id, mes: m, gestion, tipo: def.recurrencia, montoBase: def.monto });
-      }
-    }
-  }
-
-  return items;
 }
 
 aportes.get('/', (c) => {
