@@ -2,9 +2,12 @@ import { create } from 'zustand';
 import type {
   Socio,
   SocioInput,
+  SocioConGeneracion,
   Aporte,
   AporteInput,
   AporteRegistro,
+  GeneracionResult,
+  CrearDefinicionResponse,
   Multa,
   Movimiento,
   Egreso,
@@ -71,8 +74,6 @@ type MultaFilters = {
 };
 type EgresoFilters = { categoria?: string; fechaDesde?: string; fechaHasta?: string };
 
-type AporteBulkResult = { count: number; items: AporteRegistro[] };
-
 type DashboardData = {
   totalSocios: number;
   recaudado: number;
@@ -95,8 +96,8 @@ type AppState = {
   sociosLoading: boolean;
   sociosError: string | null;
   fetchSocios: (search?: string, estadoId?: string, grupoId?: string) => Promise<void>;
-  createSocio: (data: Partial<SocioInput>) => Promise<Socio>;
-  updateSocio: (id: string, data: Partial<SocioInput>) => Promise<Socio>;
+  createSocio: (data: Partial<SocioInput>) => Promise<SocioConGeneracion>;
+  updateSocio: (id: string, data: Partial<SocioInput>) => Promise<SocioConGeneracion>;
   deleteSocio: (id: string) => Promise<void>;
   bajaSocio: (id: string, motivo: string) => Promise<Socio>;
 
@@ -104,7 +105,7 @@ type AppState = {
   aporteRegistrosLoading: boolean;
   aporteRegistrosError: string | null;
   fetchAporteRegistros: (filters?: AporteFilters) => Promise<void>;
-  createAporte: (data: CrearAporteRequest) => Promise<AporteBulkResult>;
+  createAporte: (data: CrearAporteRequest) => Promise<GeneracionResult>;
   pagarAporte: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<AporteRegistro>;
 
   multas: Multa[];
@@ -163,11 +164,11 @@ type AppState = {
   updateGrupo: (id: string, data: Partial<GrupoInput>) => Promise<void>;
   removeGrupo: (id: string) => Promise<void>;
   fetchAportesDef: () => Promise<void>;
-  addAporte: (data: AporteInput) => Promise<void>;
+  addAporte: (data: AporteInput) => Promise<GeneracionResult>;
   updateAporte: (id: string, data: Partial<AporteInput>) => Promise<void>;
   removeAporte: (id: string) => Promise<void>;
-  createAportesBulk: (payload: BulkAporteRequest) => Promise<AporteBulkResult>;
-  createAportesBulkAll: (payload: BulkAporteRequest) => Promise<AporteBulkResult>;
+  createAportesBulk: (payload: BulkAporteRequest) => Promise<GeneracionResult>;
+  createAportesBulkAll: (payload: BulkAporteRequest) => Promise<GeneracionResult>;
   fetchPagosAporte: (id: string) => Promise<Movimiento[]>;
 
   balanceReport: BalanceReport | null;
@@ -214,13 +215,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   createSocio: async (data) => {
-    const socio = await request<Socio>('/socios', { method: 'POST', body: JSON.stringify(data) });
+    const socio = await request<SocioConGeneracion>('/socios', { method: 'POST', body: JSON.stringify(data) });
     set({ socios: [...get().socios, socio] });
+    // T3.1/D16: el guardado genera cobros; refrescar los registros para que
+    // aparezcan de inmediato en la lista (la lista de socios ya se actualizó).
+    void get().fetchAporteRegistros();
     return socio;
   },
   updateSocio: async (id, data) => {
-    const socio = await request<Socio>(`/socios/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    const socio = await request<SocioConGeneracion>(`/socios/${id}`, { method: 'PUT', body: JSON.stringify(data) });
     set({ socios: get().socios.map((s) => (s.id === id ? socio : s)) });
+    // T3.1/D16: un PUT puede generar cobros (nuevas asignaciones/membresías).
+    void get().fetchAporteRegistros();
     return socio;
   },
   deleteSocio: async (id) => {
@@ -261,7 +267,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   createAporte: async (data) => {
     // Generación simple definition-driven: { socioId, aporteId, gestion, mes? }
-    return request<AporteBulkResult>('/aportes', { method: 'POST', body: JSON.stringify(data) });
+    // Endpoint conservado (D17); dedup-safe al re-ejecutar.
+    return request<GeneracionResult>('/aportes', { method: 'POST', body: JSON.stringify(data) });
   },
   pagarAporte: async (id, data) => {
     const aporte = await request<AporteRegistro>(`/aportes/${id}/pagar`, { method: 'POST', body: JSON.stringify(data) });
@@ -494,9 +501,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   addAporte: async (data) => {
-    // El endpoint devuelve el catálogo completo; se reemplaza la lista (patrón tiposActividad)
-    const definiciones = await request<Aporte[]>('/aportes-definicion', { method: 'POST', body: JSON.stringify(data) });
-    set({ aportes: definiciones });
+    // D15: POST devuelve { definiciones: catálogo COMPLETO, generados } — se
+    // reemplaza la lista (patrón tiposActividad) y se devuelve `generados`
+    // para que el caller pueda tostear el conteo (D22).
+    const res = await request<CrearDefinicionResponse>('/aportes-definicion', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    set({ aportes: res.definiciones });
+    return res.generados;
   },
   updateAporte: async (id, data) => {
     const definiciones = await request<Aporte[]>(`/aportes-definicion/${id}`, { method: 'PUT', body: JSON.stringify(data) });
@@ -509,14 +522,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ aportes: definiciones });
   },
   createAportesBulk: async (payload) => {
-    return request<AporteBulkResult>('/aportes/bulk', {
+    return request<GeneracionResult>('/aportes/bulk', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   },
   createAportesBulkAll: async (payload: BulkAporteRequest) => {
     // /bulk/all resuelve todos los socios permitidos; el payload NO lleva socioIds
-    return request<AporteBulkResult>('/aportes/bulk/all', {
+    return request<GeneracionResult>('/aportes/bulk/all', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
