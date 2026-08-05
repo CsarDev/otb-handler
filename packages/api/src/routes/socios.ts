@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and, like, or, inArray } from 'drizzle-orm';
+import { eq, and, like, or, inArray, sql } from 'drizzle-orm';
 import type { AporteInherited, Socio } from '@otb/core';
 
 const socios = new Hono();
@@ -83,6 +83,7 @@ function aportesDirectosPorSocio(ids: string[]): Map<string, string[]> {
     })
     .from(schema.socioAportes)
     .where(inArray(schema.socioAportes.socioId, ids))
+    .orderBy(sql`rowid`) // orden de inserción (el orden enviado en POST)
     .all();
 
   for (const f of filas) {
