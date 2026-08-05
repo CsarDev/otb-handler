@@ -47,13 +47,16 @@ export function migrarDb(): void {
 
 /**
  * Deja la DB en el estado "catálogos sembrados, sin datos": borra las tablas de
- * datos y restaura los 4 tipos de aporte del seed (mismos ids estables de
- * packages/db/src/catalogo.ts). Se ejecuta antes de CADA test para que los
- * tests de un archivo sean independientes entre sí.
+ * datos y restaura las 4 definiciones de aporte del seed (mismos ids estables de
+ * packages/db/src/catalogo.ts, modelo corregido D1: `aportes_definicion`).
+ * También limpia `grupos` para que los tests de herencia sean independientes.
+ * Se ejecuta antes de CADA test para que los tests de un archivo sean
+ * independientes entre sí.
  */
 export function limpiarDatos(): void {
   sqlite.exec(`
     DELETE FROM movimientos;
+    DELETE FROM socio_aportes;
     DELETE FROM aportes;
     DELETE FROM multas;
     DELETE FROM asistencia;
@@ -61,12 +64,13 @@ export function limpiarDatos(): void {
     DELETE FROM actividades;
     DELETE FROM egresos;
     DELETE FROM socios;
-    DELETE FROM tipos_aporte;
-    INSERT INTO tipos_aporte (id, nombre, monto_base, descripcion, activo) VALUES
-      ('ta-pleno', 'Socio Pleno', 50, 'Cuota plena mensual', 1),
-      ('ta-familiar', 'Familiar', 30, 'Cuota familiar', 1),
-      ('ta-jubilado', 'Jubilado', 25, 'Cuota jubilados', 1),
-      ('ta-honorario', 'Honorario', 0, 'Cuota simbólica (0)', 1);
+    DELETE FROM aportes_definicion;
+    DELETE FROM grupos;
+    INSERT INTO aportes_definicion (id, nombre, monto, recurrencia, inicio, fin, modalidad_pago, aplica_grupo_id, activo) VALUES
+      ('ap-mensual',  'Cuota Social Mensual', 50, 'mensual', NULL, NULL, 'cuotas', NULL, 1),
+      ('ap-familiar', 'Aporte Familiar',      30, 'mensual', NULL, NULL, 'cuotas', NULL, 1),
+      ('ap-jubilado', 'Aporte Jubilado',      25, 'mensual', NULL, NULL, 'cuotas', NULL, 1),
+      ('ap-honorario','Aporte Honorario',      0, 'mensual', NULL, NULL, 'cuotas', NULL, 1);
   `);
 }
 
@@ -100,20 +104,55 @@ export async function requestJson(
   return { status: res.status, data: await res.json() };
 }
 
-/** Crea un socio por API y devuelve la respuesta 201. */
+/**
+ * Crea un socio por API y devuelve la respuesta 201. Asigna por defecto la
+ * definición `ap-mensual` (modelo corregido: multiselect `aporteIds`); pasar
+ * `aporteIds: []` crea un socio sin asignaciones directas.
+ */
 export function crearSocio(overrides: Record<string, unknown> = {}) {
+  const { aporteIds = [IDS.apMensual], ...rest } = overrides;
   return requestJson('/api/socios', {
     method: 'POST',
-    body: { nombre: 'Juan', apellidoPaterno: 'Perez', ...overrides },
+    body: { nombre: 'Juan', apellidoPaterno: 'Perez', aporteIds, ...rest },
   });
 }
 
-// Ids estables del catálogo (fuente: packages/db/src/catalogo.ts)
+/** Crea un grupo por API y devuelve su id (UUID generado por el server). */
+export async function crearGrupo(nombre = 'Grupo A'): Promise<string> {
+  const { status, data } = await requestJson('/api/grupos', {
+    method: 'POST',
+    body: { nombre },
+  });
+  if (status !== 201) {
+    throw new Error(`No se pudo crear el grupo "${nombre}": ${JSON.stringify(data)}`);
+  }
+  const grupo = (data as { id: string; nombre: string }[]).find((g) => g.nombre === nombre);
+  if (!grupo) throw new Error(`El grupo "${nombre}" no aparece en la respuesta`);
+  return grupo.id;
+}
+
+/**
+ * Crea una definición de aporte por API y devuelve el catálogo completo (201).
+ * Body por defecto válido; los tests pasan overrides (`id`, `monto`, ...).
+ */
+export async function crearDefinicion(overrides: Record<string, unknown> = {}): Promise<any[]> {
+  const { status, data } = await requestJson('/api/aportes-definicion', {
+    method: 'POST',
+    body: { nombre: 'Definición Test', monto: 100, ...overrides },
+  });
+  if (status !== 201) {
+    throw new Error(`crearDefinicion falló (${status}): ${JSON.stringify(data)}`);
+  }
+  return data as any[];
+}
+
+// Ids estables del catálogo corregido (fuente: packages/db/src/catalogo.ts).
+// `ap*` son slugs de definición en `aportes_definicion`; `est*` son estados.
 export const IDS = {
-  taPleno: 'ta-pleno',
-  taFamiliar: 'ta-familiar',
-  taJubilado: 'ta-jubilado',
-  taHonorario: 'ta-honorario',
+  apMensual: 'ap-mensual',
+  apFamiliar: 'ap-familiar',
+  apJubilado: 'ap-jubilado',
+  apHonorario: 'ap-honorario',
   estActivo: 'est-activo',
   estSuspendido: 'est-suspendido',
   estInactivo: 'est-inactivo',
