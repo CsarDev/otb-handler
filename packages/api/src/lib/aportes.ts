@@ -1,5 +1,5 @@
 import { db, schema } from '@otb/db';
-import { eq, sql } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import type { Aporte } from '@otb/core';
 
 // Helpers de definición de aporte (modelo corregido D1–D11). El aporte ES la
@@ -88,4 +88,219 @@ export function socioHoldsAporte(
   if (socio.aporteIds?.includes(def.id)) return true;
   if (def.aplicaGrupoId == null) return false;
   return def.aplicaGrupoId === socio.grupoPrimarioId || grupos.includes(def.aplicaGrupoId);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Generador compartido (D8/D13/D15/D16): un SOLO code path para cada trigger —
+// endpoints manuales single/bulk/bulk-all, creación de definición con
+// asignación y guardado de socio. Movido desde routes/aportes.ts (T1.3).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SocioParaGenerar = { id: string; estadoId: string | null; grupoPrimarioId: string | null };
+export type AporteCreado = {
+  id: string;
+  socioId: string;
+  aporteId: string | null;
+  mes: number;
+  gestion: number;
+  tipo: string;
+  montoBase: number;
+};
+export type TxAportes = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * `gestion` debe ser un año válido; `mes` (opcional, cota inferior para
+ * `mensual`) debe ser 1..12 cuando se envía. Default de gestión: año actual
+ * (D12 — mismo default en todos los paths de generación).
+ */
+export function validarGestionMes(
+  body: Record<string, unknown>,
+): { gestion: number; mes?: number } | { error: string; status: 400 } {
+  const gestion = Number(body.gestion ?? new Date().getFullYear());
+  if (!Number.isInteger(gestion) || gestion <= 0) {
+    return { error: 'gestion is invalid', status: 400 };
+  }
+
+  let mes: number | undefined;
+  if (body.mes !== undefined && body.mes !== null) {
+    mes = Number(body.mes);
+    if (!Number.isInteger(mes) || mes < 1 || mes > 12) {
+      return { error: 'mes must be between 1 and 12', status: 400 };
+    }
+  }
+
+  return { gestion, mes };
+}
+
+/**
+ * Valida que TODAS las definiciones pedidas existan y estén activas (400 si no).
+ * Devuelve la lista de definiciones para generar.
+ */
+export function validarDefinicionesActivas(aporteIds: string[]): Aporte[] | { error: string; status: 400 } {
+  const definiciones: Aporte[] = [];
+  for (const id of aporteIds) {
+    const def = aporteDefPorId(id);
+    if (!def) return { error: `La definición de aporte "${id}" no existe`, status: 400 };
+    if (def.activo !== 1) return { error: `La definición de aporte "${id}" está inactiva`, status: 400 };
+    definiciones.push(def);
+  }
+  return definiciones;
+}
+
+// Meses de generación según la recurrencia de la definición (D8):
+// - anual → [1..12] (ignora ventana y `mes`);
+// - mensual → mesesDefinicion(def, gestion, mes?) (ventana ∩ gestión, cota inferior opcional);
+// - unico/extraordinario → [mes ?? 1].
+export function mesesParaDefinicion(def: Aporte, gestion: number, mes?: number): number[] {
+  if (def.recurrencia === 'anual') {
+    return Array.from({ length: 12 }, (_, i) => i + 1);
+  }
+  if (def.recurrencia === 'mensual') {
+    return mesesDefinicion(def, gestion, mes);
+  }
+  return [mes ?? 1];
+}
+
+/** Asignaciones directas batch: socioId → aporteIds (desde socio_aportes). */
+export function aportesDirectosPorSocio(ids: string[]): Map<string, string[]> {
+  const mapa = new Map<string, string[]>();
+  if (ids.length === 0) return mapa;
+
+  const filas = db
+    .select({ socioId: schema.socioAportes.socioId, aporteId: schema.socioAportes.aporteId })
+    .from(schema.socioAportes)
+    .where(inArray(schema.socioAportes.socioId, ids))
+    .all();
+  for (const f of filas) {
+    const arr = mapa.get(f.socioId) ?? [];
+    arr.push(f.aporteId);
+    mapa.set(f.socioId, arr);
+  }
+  return mapa;
+}
+
+/** Grupos adicionales batch: socioId → grupoIds (desde socio_grupos). */
+export function gruposAdicionalesPorSocio(ids: string[]): Map<string, string[]> {
+  const mapa = new Map<string, string[]>();
+  if (ids.length === 0) return mapa;
+
+  const filas = db
+    .select({ socioId: schema.socioGrupos.socioId, grupoId: schema.socioGrupos.grupoId })
+    .from(schema.socioGrupos)
+    .where(inArray(schema.socioGrupos.socioId, ids))
+    .all();
+  for (const f of filas) {
+    const arr = mapa.get(f.socioId) ?? [];
+    arr.push(f.grupoId);
+    mapa.set(f.socioId, arr);
+  }
+  return mapa;
+}
+
+/**
+ * Definiciones ACTIVAS cuya `aplicaGrupoId` ∈ grupoIds (D20): lote único
+ * `inArray`, sin N+1. Se usa en el guardado de socio (D16) para la mitad
+ * group-scoped de la unión. Solo activas: una definición de grupo inactiva
+ * deja de generar para miembros nuevos (los registros ya generados quedan).
+ */
+export function definicionesDeGrupos(grupoIds: string[]): Aporte[] {
+  if (grupoIds.length === 0) return [];
+  const filas = db
+    .select()
+    .from(schema.aportesDefinicion)
+    .where(
+      and(
+        inArray(schema.aportesDefinicion.aplicaGrupoId, grupoIds),
+        eq(schema.aportesDefinicion.activo, 1),
+      ),
+    )
+    .all();
+  return filas as unknown as Aporte[];
+}
+
+/** Definiciones ACTIVAS por id (lote único) — mitad directa de la unión del socio-save (D16). */
+export function definicionesPorIds(ids: string[]): Aporte[] {
+  if (ids.length === 0) return [];
+  const filas = db
+    .select()
+    .from(schema.aportesDefinicion)
+    .where(and(inArray(schema.aportesDefinicion.id, ids), eq(schema.aportesDefinicion.activo, 1)))
+    .all();
+  return filas as unknown as Aporte[];
+}
+
+/**
+ * Genera los registros de aporte DENTRO de la transacción abierta. Compartido
+ * por POST /, /bulk, /bulk/all, POST /api/aportes-definicion (D15) y el
+ * guardado de socio (D16): por cada (socio × definición que el socio "holds" —
+ * directa vía socio_aportes O heredada por grupo vía socioHoldsAporte) inserta
+ * `mesesParaDefinicion(def)` registros con monto = def.monto (snapshot →
+ * monto_base), tipo = def.recurrencia (snapshot → tipo) y aporte_id = def.id.
+ *
+ * DEDUP (D13): antes de cada INSERT se hace un SELECT-before-INSERT sobre
+ * (socioId, aporteId, mes, gestion) — si la fila ya existe se salta y NO se
+ * cuenta; el insert lleva `onConflictDoNothing()` como defensa en profundidad
+ * (no-op cuando el índice parcial `aporte_dedup_unico` de 0006 existe). El
+ * conteo devuelto son SOLO filas recién insertadas (re-run → count 0).
+ */
+export function generarAportes(
+  tx: TxAportes,
+  socios: SocioParaGenerar[],
+  definiciones: Aporte[],
+  directos: Map<string, string[]>,
+  gruposAdicionales: Map<string, string[]>,
+  gestion: number,
+  mes?: number,
+): AporteCreado[] {
+  const items: AporteCreado[] = [];
+
+  for (const socio of socios) {
+    const directosSocio = directos.get(socio.id) ?? [];
+    const gruposSocio = gruposAdicionales.get(socio.id) ?? [];
+
+    for (const def of definiciones) {
+      if (!socioHoldsAporte({ aporteIds: directosSocio, grupoPrimarioId: socio.grupoPrimarioId }, def, gruposSocio)) {
+        continue;
+      }
+
+      for (const m of mesesParaDefinicion(def, gestion, mes)) {
+        // Dedup (D13): SELECT-before-INSERT sobre la clave del índice parcial.
+        // better-sqlite3 es single-connection y la transacción ve sus propios
+        // inserts sin commit, así que el chequeo es race-free en este stack.
+        const existente = tx
+          .select({ id: schema.aportes.id })
+          .from(schema.aportes)
+          .where(
+            and(
+              eq(schema.aportes.socioId, socio.id),
+              eq(schema.aportes.aporteId, def.id),
+              eq(schema.aportes.mes, m),
+              eq(schema.aportes.gestion, gestion),
+            ),
+          )
+          .get();
+        if (existente) continue;
+
+        const id = crypto.randomUUID();
+        tx.insert(schema.aportes)
+          .values({
+            id,
+            socioId: socio.id,
+            aporteId: def.id,
+            mes: m,
+            gestion,
+            tipo: def.recurrencia,
+            montoBase: def.monto,
+            montoPagado: 0,
+            saldoPendiente: def.monto,
+            estado: 'pendiente',
+          })
+          .onConflictDoNothing()
+          .run();
+        items.push({ id, socioId: socio.id, aporteId: def.id, mes: m, gestion, tipo: def.recurrencia, montoBase: def.monto });
+      }
+    }
+  }
+
+  return items;
 }
