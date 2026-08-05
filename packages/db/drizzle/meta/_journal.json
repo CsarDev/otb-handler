@@ -43,6 +43,13 @@
       "when": 1785873346121,
       "tag": "0005_wise_narwhal",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1785908665315,
+      "tag": "0006_burly_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }
