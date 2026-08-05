@@ -1,0 +1,55 @@
+name: PR Hygiene
+
+on:
+  schedule:
+    - cron: '0 6 * * *'      # todos los días 06:00 UTC
+  workflow_dispatch:          # o manual desde Actions
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Close orphan PRs (branch already in dev)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch origin dev feat --prune || true
+          gh pr list --state open --json number,headRefName,baseRefName \
+            -q '.[] | select(.baseRefName == "dev") | "\(.number) \(.headRefName)"' |
+          while read -r num head; do
+            [ -z "$num" ] && continue
+            if git merge-base --is-ancestor "origin/$head" origin/dev 2>/dev/null; then
+              echo "Cerrando PR #$num ($head): ya integrado en dev"
+              gh pr close "$num" --comment "🤖 PR huérfano: la rama $head ya está integrada en dev. Se cierra automáticamente por PR Hygiene."
+              git push origin --delete "$head" || echo "  (no se pudo borrar la rama $head)"
+            fi
+          done
+
+      - name: Delete feat branches already merged into dev
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch origin dev feat --prune || true
+          for head in $(git branch -r --merged origin/dev | grep -E 'origin/feat/' | sed 's|origin/||' | xargs); do
+            # No borrar ramas que tienen un PR abierto hacia dev (puede estar en revisión)
+            if gh pr list --state open --json headRefName --jq ".[].headRefName" | grep -qx "$head"; then
+              echo "Saltando $head: tiene PR abierto"
+              continue
+            fi
+            echo "Borrando rama integrada: $head"
+            git push origin --delete "$head" || echo "  (no se pudo borrar $head)"
+          done
+
+      - name: Summarize
+        run: |
+          echo "✅ PR Hygiene completado. Revisá el log para ver qué se cerró/borró."

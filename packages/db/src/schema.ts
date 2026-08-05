@@ -1,4 +1,6 @@
 export * from './schema/socios';
+export * from './schema/aportes-definicion';
+export * from './schema/socio-aportes';
 export * from './schema/tipos-actividad';
 export * from './schema/actividades';
 export * from './schema/asistencia';
@@ -7,3 +9,8 @@ export * from './schema/multas';
 export * from './schema/movimientos';
 export * from './schema/egresos';
 export * from './schema/config';
+export * from './schema/estados-socio';
+export * from './schema/acciones-socio';
+export * from './schema/estado-acciones';
+export * from './schema/grupos';
+export * from './schema/socio-grupos';

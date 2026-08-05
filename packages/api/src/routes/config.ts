@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq } from 'drizzle-orm';
+import { aporteDefActivoDefault } from '../lib/aportes';
 
 const configRouter = new Hono();
 const MODULE_NAME = 'otb-core';
@@ -18,7 +19,14 @@ function getOtbConfig(): Record<string, unknown> | null {
 configRouter.get('/', (c) => {
   const config = getOtbConfig();
   if (!config) return c.json({ error: 'OTB not configured' }, 404);
-  return c.json(config);
+
+  // D11: `aporteMensualBase` se deriva de la primera definición de aporte activa
+  // (`aporteDefActivoDefault().monto`); el valor crudo guardado queda como legacy.
+  const def = aporteDefActivoDefault();
+  return c.json({
+    ...config,
+    aporteMensualBase: def?.monto ?? config.aporteMensualBase,
+  });
 });
 
 configRouter.put('/', async (c) => {

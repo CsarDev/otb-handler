@@ -1,13 +1,28 @@
 import { create } from 'zustand';
 import type {
   Socio,
+  SocioInput,
   Aporte,
+  AporteInput,
+  AporteRegistro,
   Multa,
+  Movimiento,
   Egreso,
   Actividad,
   Asistencia,
   TipoActividad,
   OTBConfig,
+  BalanceReport,
+  BulkAporteRequest,
+  CrearAporteRequest,
+  LibroDiarioEntry,
+  ResumenSocioReport,
+  EstadoSocio,
+  AccionSocio,
+  Grupo,
+  EstadoSocioInput,
+  AccionSocioInput,
+  GrupoInput,
 } from '@otb/core';
 
 const BASE = '/api';
@@ -33,9 +48,30 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-type AporteFilters = { socioId?: string; mes?: string; gestion?: string; estado?: string };
-type MultaFilters = { socioId?: string; estado?: string };
+type AporteFilters = {
+  socioId?: string;
+  mes?: string;
+  gestion?: string;
+  estado?: string;
+  tipo?: string;
+  fechaDesde?: string;
+  fechaHasta?: string;
+  estadoId?: string;
+  grupoId?: string;
+};
+type MultaFilters = {
+  socioId?: string;
+  estado?: string;
+  actividadId?: string;
+  fechaDesde?: string;
+  fechaHasta?: string;
+  gestion?: string;
+  estadoId?: string;
+  grupoId?: string;
+};
 type EgresoFilters = { categoria?: string; fechaDesde?: string; fechaHasta?: string };
+
+type AporteBulkResult = { count: number; items: AporteRegistro[] };
 
 type DashboardData = {
   totalSocios: number;
@@ -58,56 +94,89 @@ type AppState = {
   socios: Socio[];
   sociosLoading: boolean;
   sociosError: string | null;
-  fetchSocios: (search?: string) => Promise<void>;
-  createSocio: (data: Partial<Socio>) => Promise<Socio>;
-  updateSocio: (id: number, data: Partial<Socio>) => Promise<Socio>;
-  deleteSocio: (id: number) => Promise<void>;
+  fetchSocios: (search?: string, estadoId?: string, grupoId?: string) => Promise<void>;
+  createSocio: (data: Partial<SocioInput>) => Promise<Socio>;
+  updateSocio: (id: string, data: Partial<SocioInput>) => Promise<Socio>;
+  deleteSocio: (id: string) => Promise<void>;
+  bajaSocio: (id: string, motivo: string) => Promise<Socio>;
 
-  aportes: Aporte[];
-  aportesLoading: boolean;
-  aportesError: string | null;
-  fetchAportes: (filters?: AporteFilters) => Promise<void>;
-  createAporte: (data: Partial<Aporte>) => Promise<Aporte>;
-  pagarAporte: (id: number, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Aporte>;
+  aporteRegistros: AporteRegistro[];
+  aporteRegistrosLoading: boolean;
+  aporteRegistrosError: string | null;
+  fetchAporteRegistros: (filters?: AporteFilters) => Promise<void>;
+  createAporte: (data: CrearAporteRequest) => Promise<AporteBulkResult>;
+  pagarAporte: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<AporteRegistro>;
 
   multas: Multa[];
   multasLoading: boolean;
   multasError: string | null;
   fetchMultas: (filters?: MultaFilters) => Promise<void>;
   createMulta: (data: Partial<Multa>) => Promise<Multa>;
-  pagarMulta: (id: number, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Multa>;
-  anularMulta: (id: number) => Promise<void>;
+  pagarMulta: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Multa>;
+  anularMulta: (id: string, razon: string) => Promise<Multa>;
+  anularAporte: (id: string, razon: string) => Promise<AporteRegistro>;
 
   egresos: Egreso[];
   egresosLoading: boolean;
   egresosError: string | null;
   fetchEgresos: (filters?: EgresoFilters) => Promise<void>;
   createEgreso: (data: Partial<Egreso>) => Promise<Egreso>;
-  updateEgreso: (id: number, data: Partial<Egreso>) => Promise<Egreso>;
-  deleteEgreso: (id: number) => Promise<void>;
+  updateEgreso: (id: string, data: Partial<Egreso>) => Promise<Egreso>;
+  deleteEgreso: (id: string) => Promise<void>;
 
   actividades: Actividad[];
   actividadesLoading: boolean;
   actividadesError: string | null;
   fetchActividades: () => Promise<void>;
   createActividad: (data: Partial<Actividad>) => Promise<Actividad>;
-  updateActividad: (id: number, data: Partial<Actividad>) => Promise<Actividad>;
-  deleteActividad: (id: number) => Promise<void>;
+  updateActividad: (id: string, data: Partial<Actividad>) => Promise<Actividad>;
+  deleteActividad: (id: string) => Promise<void>;
 
   asistenciaRecords: Asistencia[];
   asistenciaLoading: boolean;
   asistenciaError: string | null;
-  fetchAsistencia: (actividadId: number) => Promise<void>;
-  saveAsistencia: (actividadId: number, registros: { socioId: number; tipoAsistencia: string; minutosTardanza?: number }[]) => Promise<void>;
+  fetchAsistencia: (actividadId: string, estadoId?: string, grupoId?: string) => Promise<void>;
+  saveAsistencia: (actividadId: string, registros: { socioId: string; tipoAsistencia: string; minutosTardanza?: number }[]) => Promise<void>;
 
   config: OTBConfig | null;
   tiposActividad: TipoActividad[];
+  estadosSocio: EstadoSocio[];
+  accionesSocio: AccionSocio[];
+  grupos: Grupo[];
+  aportes: Aporte[];
+  aportesLoading: boolean;
+  aportesError: string | null;
   configLoading: boolean;
   configError: string | null;
   fetchConfig: () => Promise<void>;
   updateConfig: (data: Partial<OTBConfig>) => Promise<void>;
   addTipoActividad: (tipo: TipoActividad) => Promise<void>;
-  removeTipoActividad: (nombre: string) => Promise<void>;
+  updateTipoActividad: (id: string, data: Partial<TipoActividad>) => Promise<void>;
+  removeTipoActividad: (id: string) => Promise<void>;
+  addEstadoSocio: (data: EstadoSocioInput) => Promise<void>;
+  updateEstadoSocio: (id: string, data: Partial<EstadoSocioInput>) => Promise<void>;
+  removeEstadoSocio: (id: string) => Promise<void>;
+  setEstadoAcciones: (id: string, accionIds: string[]) => Promise<void>;
+  addAccionSocio: (data: AccionSocioInput) => Promise<void>;
+  removeAccionSocio: (id: string) => Promise<void>;
+  addGrupo: (data: GrupoInput) => Promise<void>;
+  updateGrupo: (id: string, data: Partial<GrupoInput>) => Promise<void>;
+  removeGrupo: (id: string) => Promise<void>;
+  fetchAportesDef: () => Promise<void>;
+  addAporte: (data: AporteInput) => Promise<void>;
+  updateAporte: (id: string, data: Partial<AporteInput>) => Promise<void>;
+  removeAporte: (id: string) => Promise<void>;
+  createAportesBulk: (payload: BulkAporteRequest) => Promise<AporteBulkResult>;
+  createAportesBulkAll: (payload: BulkAporteRequest) => Promise<AporteBulkResult>;
+  fetchPagosAporte: (id: string) => Promise<Movimiento[]>;
+
+  balanceReport: BalanceReport | null;
+  libroDiario: LibroDiarioEntry[];
+  resumenSocio: ResumenSocioReport | null;
+  reportsLoading: boolean;
+  fetchBalance: (gestion?: number, mes?: string, fechaDesde?: string, fechaHasta?: string) => Promise<void>;
+  fetchLibroDiario: (fechaDesde?: string, fechaHasta?: string, gestion?: string, mes?: string, tipo?: string, estadoId?: string, grupoId?: string) => Promise<void>;
+  fetchResumenSocio: (socioId: string, gestion?: string, mes?: string, fechaDesde?: string, fechaHasta?: string, tipo?: string, estadoId?: string, grupoId?: string) => Promise<void>;
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -130,10 +199,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   socios: [],
   sociosLoading: false,
   sociosError: null,
-  fetchSocios: async (search) => {
+  fetchSocios: async (search, estadoId, grupoId) => {
     set({ sociosLoading: true, sociosError: null });
     try {
-      const qs = search ? `?search=${encodeURIComponent(search)}` : '';
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      if (estadoId) params.set('estadoId', estadoId);
+      if (grupoId) params.set('grupoId', grupoId);
+      const qs = params.toString() ? `?${params}` : '';
       const data = await request<Socio[]>(`/socios${qs}`);
       set({ socios: data, sociosLoading: false });
     } catch (e) {
@@ -154,33 +227,45 @@ export const useAppStore = create<AppState>((set, get) => ({
     await request(`/socios/${id}`, { method: 'DELETE' });
     set({ socios: get().socios.filter((s) => s.id !== id) });
   },
+  bajaSocio: async (id, motivo) => {
+    const socio = await request<Socio>(`/socios/${id}/baja`, {
+      method: 'POST',
+      body: JSON.stringify({ motivo }),
+    });
+    set({ socios: get().socios.map((s) => (s.id === id ? socio : s)) });
+    return socio;
+  },
 
-  aportes: [],
-  aportesLoading: false,
-  aportesError: null,
-  fetchAportes: async (filters) => {
-    set({ aportesLoading: true, aportesError: null });
+  aporteRegistros: [],
+  aporteRegistrosLoading: false,
+  aporteRegistrosError: null,
+  fetchAporteRegistros: async (filters) => {
+    set({ aporteRegistrosLoading: true, aporteRegistrosError: null });
     try {
       const params = new URLSearchParams();
       if (filters?.socioId) params.set('socioId', filters.socioId);
       if (filters?.mes) params.set('mes', filters.mes);
       if (filters?.gestion) params.set('gestion', filters.gestion);
       if (filters?.estado) params.set('estado', filters.estado);
+      if (filters?.tipo) params.set('tipo', filters.tipo);
+      if (filters?.fechaDesde) params.set('fechaDesde', filters.fechaDesde);
+      if (filters?.fechaHasta) params.set('fechaHasta', filters.fechaHasta);
+      if (filters?.estadoId) params.set('estadoId', filters.estadoId);
+      if (filters?.grupoId) params.set('grupoId', filters.grupoId);
       const qs = params.toString() ? `?${params}` : '';
-      const data = await request<Aporte[]>(`/aportes${qs}`);
-      set({ aportes: data, aportesLoading: false });
+      const data = await request<AporteRegistro[]>(`/aportes${qs}`);
+      set({ aporteRegistros: data, aporteRegistrosLoading: false });
     } catch (e) {
-      set({ aportesError: (e as Error).message, aportesLoading: false });
+      set({ aporteRegistrosError: (e as Error).message, aporteRegistrosLoading: false });
     }
   },
   createAporte: async (data) => {
-    const aporte = await request<Aporte>('/aportes', { method: 'POST', body: JSON.stringify(data) });
-    set({ aportes: [...get().aportes, aporte] });
-    return aporte;
+    // Generación simple definition-driven: { socioId, aporteId, gestion, mes? }
+    return request<AporteBulkResult>('/aportes', { method: 'POST', body: JSON.stringify(data) });
   },
   pagarAporte: async (id, data) => {
-    const aporte = await request<Aporte>(`/aportes/${id}/pagar`, { method: 'POST', body: JSON.stringify(data) });
-    set({ aportes: get().aportes.map((a) => (a.id === id ? aporte : a)) });
+    const aporte = await request<AporteRegistro>(`/aportes/${id}/pagar`, { method: 'POST', body: JSON.stringify(data) });
+    set({ aporteRegistros: get().aporteRegistros.map((a) => (a.id === id ? aporte : a)) });
     return aporte;
   },
 
@@ -193,6 +278,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       const params = new URLSearchParams();
       if (filters?.socioId) params.set('socioId', filters.socioId);
       if (filters?.estado) params.set('estado', filters.estado);
+      if (filters?.actividadId) params.set('actividadId', filters.actividadId);
+      if (filters?.fechaDesde) params.set('fechaDesde', filters.fechaDesde);
+      if (filters?.fechaHasta) params.set('fechaHasta', filters.fechaHasta);
+      if (filters?.gestion) params.set('gestion', filters.gestion);
+      if (filters?.estadoId) params.set('estadoId', filters.estadoId);
+      if (filters?.grupoId) params.set('grupoId', filters.grupoId);
       const qs = params.toString() ? `?${params}` : '';
       const data = await request<Multa[]>(`/multas${qs}`);
       set({ multas: data, multasLoading: false });
@@ -210,9 +301,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ multas: get().multas.map((m) => (m.id === id ? multa : m)) });
     return multa;
   },
-  anularMulta: async (id) => {
-    await request(`/multas/${id}`, { method: 'DELETE' });
-    set({ multas: get().multas.filter((m) => m.id !== id) });
+  anularMulta: async (id: string, razon: string) => {
+    const multa = await request<Multa>(`/multas/${id}/anular`, { method: 'POST', body: JSON.stringify({ razon }) });
+    set({ multas: get().multas.map((m) => (m.id === id ? multa : m)) });
+    return multa;
+  },
+  anularAporte: async (id: string, razon: string) => {
+    const aporte = await request<AporteRegistro>(`/aportes/${id}/anular`, { method: 'POST', body: JSON.stringify({ razon }) });
+    set({ aporteRegistros: get().aporteRegistros.map((a) => (a.id === id ? aporte : a)) });
+    return aporte;
   },
 
   egresos: [],
@@ -277,10 +374,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   asistenciaRecords: [],
   asistenciaLoading: false,
   asistenciaError: null,
-  fetchAsistencia: async (actividadId) => {
+  fetchAsistencia: async (actividadId, estadoId, grupoId) => {
     set({ asistenciaLoading: true, asistenciaError: null });
     try {
-      const data = await request<Asistencia[]>(`/asistencia/actividad/${actividadId}`);
+      const params = new URLSearchParams();
+      if (estadoId) params.set('estadoId', estadoId);
+      if (grupoId) params.set('grupoId', grupoId);
+      const qs = params.toString() ? `?${params}` : '';
+      const data = await request<Asistencia[]>(`/asistencia/actividad/${actividadId}${qs}`);
       set({ asistenciaRecords: data, asistenciaLoading: false });
     } catch (e) {
       set({ asistenciaError: (e as Error).message, asistenciaLoading: false });
@@ -296,16 +397,34 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   config: null,
   tiposActividad: [],
+  estadosSocio: [],
+  accionesSocio: [],
+  grupos: [],
+  aportes: [],
+  aportesLoading: false,
+  aportesError: null,
   configLoading: false,
   configError: null,
   fetchConfig: async () => {
     set({ configLoading: true, configError: null });
     try {
-      const [config, tiposActividad] = await Promise.all([
+      const [config, tiposActividad, estadosSocio, accionesSocio, grupos, aportes] = await Promise.all([
         request<OTBConfig>('/config').catch(() => null),
         request<TipoActividad[]>('/tipos-actividad').catch(() => []),
+        request<EstadoSocio[]>('/estados-socio').catch(() => []),
+        request<AccionSocio[]>('/acciones-socio').catch(() => []),
+        request<Grupo[]>('/grupos').catch(() => []),
+        request<Aporte[]>('/aportes-definicion').catch(() => []),
       ]);
-      set({ config, tiposActividad: Array.isArray(tiposActividad) ? tiposActividad : [], configLoading: false });
+      set({
+        config,
+        tiposActividad: Array.isArray(tiposActividad) ? tiposActividad : [],
+        estadosSocio: Array.isArray(estadosSocio) ? estadosSocio : [],
+        accionesSocio: Array.isArray(accionesSocio) ? accionesSocio : [],
+        grupos: Array.isArray(grupos) ? grupos : [],
+        aportes: Array.isArray(aportes) ? aportes : [],
+        configLoading: false,
+      });
     } catch (e) {
       set({ configError: (e as Error).message, configLoading: false });
     }
@@ -318,8 +437,155 @@ export const useAppStore = create<AppState>((set, get) => ({
     const tipos = await request<TipoActividad[]>('/tipos-actividad', { method: 'POST', body: JSON.stringify(tipo) });
     set({ tiposActividad: tipos });
   },
-  removeTipoActividad: async (nombre) => {
-    const tipos = await request<TipoActividad[]>(`/tipos-actividad/${encodeURIComponent(nombre)}`, { method: 'DELETE' });
+  updateTipoActividad: async (id, data) => {
+    const tipos = await request<TipoActividad[]>(`/tipos-actividad/${id}`, { method: 'PUT', body: JSON.stringify(data) });
     set({ tiposActividad: tipos });
   },
+  removeTipoActividad: async (id) => {
+    const tipos = await request<TipoActividad[]>(`/tipos-actividad/${id}`, { method: 'DELETE' });
+    set({ tiposActividad: tipos });
+  },
+  addEstadoSocio: async (data) => {
+    const estados = await request<EstadoSocio[]>('/estados-socio', { method: 'POST', body: JSON.stringify(data) });
+    set({ estadosSocio: estados });
+  },
+  updateEstadoSocio: async (id, data) => {
+    const estados = await request<EstadoSocio[]>(`/estados-socio/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    set({ estadosSocio: estados });
+  },
+  removeEstadoSocio: async (id) => {
+    const estados = await request<EstadoSocio[]>(`/estados-socio/${id}`, { method: 'DELETE' });
+    set({ estadosSocio: estados });
+  },
+  setEstadoAcciones: async (id, accionIds) => {
+    const estados = await request<EstadoSocio[]>(`/estados-socio/${id}/acciones`, {
+      method: 'PUT',
+      body: JSON.stringify({ accionIds }),
+    });
+    set({ estadosSocio: estados });
+  },
+  addAccionSocio: async (data) => {
+    const acciones = await request<AccionSocio[]>('/acciones-socio', { method: 'POST', body: JSON.stringify(data) });
+    set({ accionesSocio: acciones });
+  },
+  removeAccionSocio: async (id) => {
+    const acciones = await request<AccionSocio[]>(`/acciones-socio/${id}`, { method: 'DELETE' });
+    set({ accionesSocio: acciones });
+  },
+  addGrupo: async (data) => {
+    const grupos = await request<Grupo[]>('/grupos', { method: 'POST', body: JSON.stringify(data) });
+    set({ grupos });
+  },
+  updateGrupo: async (id, data) => {
+    const grupos = await request<Grupo[]>(`/grupos/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    set({ grupos });
+  },
+  removeGrupo: async (id) => {
+    const grupos = await request<Grupo[]>(`/grupos/${id}`, { method: 'DELETE' });
+    set({ grupos });
+  },
+  fetchAportesDef: async () => {
+    set({ aportesLoading: true, aportesError: null });
+    try {
+      const definiciones = await request<Aporte[]>('/aportes-definicion');
+      set({ aportes: Array.isArray(definiciones) ? definiciones : [], aportesLoading: false });
+    } catch (e) {
+      set({ aportesError: (e as Error).message, aportesLoading: false });
+    }
+  },
+  addAporte: async (data) => {
+    // El endpoint devuelve el catálogo completo; se reemplaza la lista (patrón tiposActividad)
+    const definiciones = await request<Aporte[]>('/aportes-definicion', { method: 'POST', body: JSON.stringify(data) });
+    set({ aportes: definiciones });
+  },
+  updateAporte: async (id, data) => {
+    const definiciones = await request<Aporte[]>(`/aportes-definicion/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    set({ aportes: definiciones });
+  },
+  removeAporte: async (id) => {
+    // DELETE guarda 409 cuando hay socios (socio_aportes) o registros (aportes.aporte_id)
+    // usando la definición; el mensaje amigable se propaga al UI.
+    const definiciones = await request<Aporte[]>(`/aportes-definicion/${id}`, { method: 'DELETE' });
+    set({ aportes: definiciones });
+  },
+  createAportesBulk: async (payload) => {
+    return request<AporteBulkResult>('/aportes/bulk', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  createAportesBulkAll: async (payload: BulkAporteRequest) => {
+    // /bulk/all resuelve todos los socios permitidos; el payload NO lleva socioIds
+    return request<AporteBulkResult>('/aportes/bulk/all', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  fetchPagosAporte: async (id) => {
+    return request<Movimiento[]>(`/aportes/${id}/pagos`);
+  },
+
+  balanceReport: null,
+  libroDiario: [],
+  resumenSocio: null,
+  reportsLoading: false,
+  fetchBalance: async (gestion, mes, fechaDesde, fechaHasta) => {
+    set({ reportsLoading: true });
+    try {
+      const params = new URLSearchParams();
+      if (gestion) params.set('gestion', String(gestion));
+      if (mes) params.set('mes', mes);
+      if (fechaDesde) params.set('fechaDesde', fechaDesde);
+      if (fechaHasta) params.set('fechaHasta', fechaHasta);
+      const qs = params.toString() ? `?${params}` : '';
+      const data = await request<BalanceReport>(`/reportes/balance${qs}`);
+      set({ balanceReport: data, reportsLoading: false });
+    } catch (e) {
+      set({ reportsLoading: false });
+    }
+  },
+  fetchLibroDiario: async (fechaDesde, fechaHasta, gestion, mes, tipo, estadoId, grupoId) => {
+    set({ reportsLoading: true });
+    try {
+      const params = new URLSearchParams();
+      if (fechaDesde) params.set('fechaDesde', fechaDesde);
+      if (fechaHasta) params.set('fechaHasta', fechaHasta);
+      if (gestion) params.set('gestion', gestion);
+      if (mes) params.set('mes', mes);
+      if (tipo && tipo !== 'todos') params.set('tipo', tipo);
+      if (estadoId) params.set('estadoId', estadoId);
+      if (grupoId) params.set('grupoId', grupoId);
+      const qs = params.toString() ? `?${params}` : '';
+      const data = await request<LibroDiarioEntry[]>(`/reportes/libro-diario${qs}`);
+      set({ libroDiario: data, reportsLoading: false });
+    } catch (e) {
+      set({ reportsLoading: false });
+    }
+  },
+  fetchResumenSocio: async (socioId, gestion, mes, fechaDesde, fechaHasta, tipo, estadoId, grupoId) => {
+    set({ reportsLoading: true });
+    try {
+      const params = new URLSearchParams();
+      if (gestion) params.set('gestion', gestion);
+      if (mes) params.set('mes', mes);
+      if (fechaDesde) params.set('fechaDesde', fechaDesde);
+      if (fechaHasta) params.set('fechaHasta', fechaHasta);
+      if (tipo && tipo !== 'todos') params.set('tipo', tipo);
+      if (estadoId) params.set('estadoId', estadoId);
+      if (grupoId) params.set('grupoId', grupoId);
+      const qs = params.toString() ? `?${params}` : '';
+      const data = await request<ResumenSocioReport>(`/reportes/resumen-socio/${socioId}${qs}`);
+      set({ resumenSocio: data, reportsLoading: false });
+    } catch (e) {
+      set({ reportsLoading: false });
+    }
+  },
 }));
+
+/**
+ * Selector de definiciones de aporte activas (activo=1), para el multiselect de
+ * socio y la UI de aportes.
+ */
+export function selectAportesActivos(aportes: Aporte[]): Aporte[] {
+  return aportes.filter((a) => a.activo === 1);
+}

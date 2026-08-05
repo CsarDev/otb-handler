@@ -1,0 +1,35 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Tech stack: Nx pnpm monorepo — TypeScript 5.6 (strict), React 19 (web/desktop/mobile), Hono 4 (API server), Drizzle ORM + SQLite/PostgreSQL, Tailwind CSS 4, Zustand 5, TanStack Router, Zod 4, Vitest 2.1
+  Architecture: Modular monorepo — packages/core (domain logic), packages/db (schema + Drizzle), packages/api (Hono routes), packages/auth (JWT/jose), packages/ui (shadcn/ui + CVA), packages/excel (SheetJS), packages/pdf (react-pdf), packages/logger (Pino), packages/modules (configurable feature modules). Apps: server (Hono), web (React SPA), desktop (Tauri), mobile (Expo)
+  Domain: OTB (Organización Territorial de Base) membership management — socios, asistencia, aportes, multas, egresos, reportes
+  Testing: Vitest 2.1 workspace (packages/*, apps/*) — test infrastructure configured, no test files exist yet
+  Style: Prettier 3.4 — semi, singleQuote, trailingComma all, printWidth 100, tabWidth 2. Conventional commits (feat/fix/refactor/docs/test). Nx cache for build/test/lint/typecheck
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected packages/apps in the monorepo
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include architecture decisions with rationale
+    - Reference PROJECT_KNOWLEDGE.md for domain context
+  tasks:
+    - Group tasks by phase (infrastructure, implementation, testing)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+    - Prefix task IDs with package scope (e.g., [core], [api], [web])
+  apply:
+    - Follow existing code patterns and conventions
+    - Load relevant coding skills for the project stack
+    - Run typecheck after changes: pnpm typecheck
+  verify:
+    - Run tests if test infrastructure exists: pnpm test
+    - Check typecheck: pnpm typecheck
+    - Compare implementation against every spec scenario
+  archive:
+    - Warn before merging destructive deltas (large removals)

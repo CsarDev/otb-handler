@@ -73,12 +73,41 @@ egresos.put('/:id', async (c) => {
 
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
-  const result = db
-    .update(schema.egresos)
-    .set(body)
-    .where(eq(schema.egresos.id, id))
-    .returning()
-    .get();
+  const result = db.transaction((tx) => {
+    const updated = tx
+      .update(schema.egresos)
+      .set(body)
+      .where(eq(schema.egresos.id, id))
+      .returning()
+      .get();
+
+    const movimiento = tx
+      .select()
+      .from(schema.movimientos)
+      .where(
+        and(
+          eq(schema.movimientos.referenciaId, id),
+          eq(schema.movimientos.tipo, 'egreso'),
+        ),
+      )
+      .get();
+
+    if (movimiento) {
+      const movimientoUpdate: Record<string, any> = {};
+      if (body.monto !== undefined) movimientoUpdate.monto = body.monto;
+      if (body.categoria !== undefined || body.descripcion !== undefined) {
+        movimientoUpdate.nota = `Egreso: ${body.categoria ?? existing.categoria}${body.descripcion ? ` - ${body.descripcion}` : existing.descripcion ? ` - ${existing.descripcion}` : ''}`;
+      }
+      if (Object.keys(movimientoUpdate).length > 0) {
+        tx.update(schema.movimientos)
+          .set(movimientoUpdate)
+          .where(eq(schema.movimientos.id, movimiento.id))
+          .run();
+      }
+    }
+
+    return updated;
+  });
 
   return c.json(result);
 });
@@ -93,7 +122,21 @@ egresos.delete('/:id', (c) => {
 
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
-  db.delete(schema.egresos).where(eq(schema.egresos.id, id)).run();
+  db.transaction((tx) => {
+    tx.delete(schema.movimientos)
+      .where(
+        and(
+          eq(schema.movimientos.referenciaId, id),
+          eq(schema.movimientos.tipo, 'egreso'),
+        ),
+      )
+      .run();
+
+    tx.delete(schema.egresos)
+      .where(eq(schema.egresos.id, id))
+      .run();
+  });
+
   return c.body(null, 204);
 });
 

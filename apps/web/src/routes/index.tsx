@@ -1,10 +1,5 @@
-import { createFileRoute } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { useAppStore } from '../stores/app.store';
-
-export const Route = createFileRoute('/')({
-  component: DashboardPage,
-});
 
 function KpiCard({
   title,
@@ -36,7 +31,7 @@ function KpiCard({
   );
 }
 
-function DashboardPage() {
+export default function DashboardPage() {
   const { dashboard, dashboardLoading, dashboardError, fetchDashboard } = useAppStore();
 
   useEffect(() => {

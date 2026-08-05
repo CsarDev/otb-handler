@@ -1,24 +1,24 @@
-import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 
-export const Route = createFileRoute('/egresos')({
-  component: EgresosPage,
-});
-
 const egresoSchema = z.object({
   categoria: z.string().min(1, 'Requerido'),
   beneficiario: z.string().min(1, 'Requerido'),
   monto: z.coerce.number().min(0.01, 'Debe ser mayor a 0'),
-  descripcion: z.string().optional().default(''),
+  descripcion: z.string().nullish().default(''),
   fecha: z.string().min(1, 'Fecha requerida'),
-  numRecibo: z.string().optional().default(''),
+  numRecibo: z.string().nullish().default(''),
 });
 
 type EgresoForm = z.infer<typeof egresoSchema>;
+
+const defaultEgreso: EgresoForm = {
+  categoria: '', beneficiario: '', monto: 0,
+  descripcion: '', fecha: '', numRecibo: '',
+};
 
 const CATEGORIAS = [
   'Servicios',
@@ -29,15 +29,15 @@ const CATEGORIAS = [
   'Otros',
 ];
 
-function EgresosPage() {
+export default function EgresosPage() {
   const { egresos, egresosLoading, egresosError, fetchEgresos, createEgreso, updateEgreso, deleteEgreso } = useAppStore();
   const [filters, setFilters] = useState({ categoria: '', fechaDesde: '', fechaHasta: '' });
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<{ id: number } & EgresoForm | null>(null);
+  const [editing, setEditing] = useState<{ id: string } & EgresoForm | null>(null);
 
   const form = useForm<EgresoForm>({
     resolver: zodResolver(egresoSchema) as any,
-    defaultValues: egresoSchema.parse({}),
+    defaultValues: defaultEgreso,
   });
 
   useEffect(() => {
@@ -50,7 +50,7 @@ function EgresosPage() {
 
   function openCreate() {
     setEditing(null);
-    form.reset(egresoSchema.parse({}));
+    form.reset(defaultEgreso);
     setModalOpen(true);
   }
 
@@ -70,7 +70,7 @@ function EgresosPage() {
     setEditing(null);
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete(id: string) {
     if (confirm('¿Eliminar este egreso?')) {
       await deleteEgreso(id);
     }

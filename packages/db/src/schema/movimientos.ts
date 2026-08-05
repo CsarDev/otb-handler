@@ -1,4 +1,4 @@
-import { sqliteTable, text, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 import { socios } from './socios';
 
 export const movimientos = sqliteTable('movimientos', {
@@ -10,4 +10,6 @@ export const movimientos = sqliteTable('movimientos', {
   numeroRecibo: text('numero_recibo'),
   nota: text('nota'),
   fecha: text('fecha').notNull(),
+  anulado: integer('anulado').notNull().default(0),
+  razonAnulacion: text('razon_anulacion'),
 });

@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri"
   },
@@ -24,5 +23,19 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@tauri-apps/cli": "^2.0.0"
+  },
+  "nx": {
+    "targets": {
+      "dev": {
+        "executor": "nx:run-script",
+        "options": {
+          "script": "dev",
+          "parallel": true
+        }
+      },
+      "build": {
+        "enabled": false
+      }
+    }
   }
 }

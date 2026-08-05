@@ -14,7 +14,13 @@ dashboard.get('/', (c) => {
   const ingresos = db
     .select({ total: sql<number>`COALESCE(SUM(${schema.movimientos.monto}), 0)` })
     .from(schema.movimientos)
-    .where(eq(schema.movimientos.tipo, 'ingreso'))
+    .where(
+      and(
+        eq(schema.movimientos.tipo, 'ingreso'),
+        gte(schema.movimientos.fecha, inicioMes),
+        lte(schema.movimientos.fecha, finMes),
+      ),
+    )
     .get();
 
   const recaudado = Number(ingresos?.total ?? 0);
@@ -31,10 +37,11 @@ dashboard.get('/', (c) => {
     .select({ count: sql<number>`COUNT(DISTINCT ${schema.aportes.socioId})` })
     .from(schema.aportes)
     .innerJoin(schema.socios, eq(schema.aportes.socioId, schema.socios.id))
+    .innerJoin(schema.estadosSocio, eq(schema.socios.estadoId, schema.estadosSocio.id))
     .where(
       and(
         eq(schema.aportes.estado, 'pendiente'),
-        eq(schema.socios.estado, 'activo'),
+        eq(schema.estadosSocio.esActivo, 1),
       ),
     )
     .get();
@@ -42,26 +49,21 @@ dashboard.get('/', (c) => {
   const morosos = Number(morososResult?.count ?? 0);
 
   const multasPendientesResult = db
-    .select({ count: sql<number>`COUNT(*)` })
+    .select({ total: sql<number>`COALESCE(SUM(${schema.multas.saldoPendiente}), 0)` })
     .from(schema.multas)
     .where(eq(schema.multas.estado, 'pendiente'))
     .get();
 
-  const multasPendientes = Number(multasPendientesResult?.count ?? 0);
+  const multasPendientes = Number(multasPendientesResult?.total ?? 0);
 
   const totalSociosResult = db
     .select({ count: sql<number>`COUNT(*)` })
     .from(schema.socios)
-    .where(eq(schema.socios.estado, 'activo'))
+    .innerJoin(schema.estadosSocio, eq(schema.socios.estadoId, schema.estadosSocio.id))
+    .where(eq(schema.estadosSocio.esActivo, 1))
     .get();
 
   const totalSocios = Number(totalSociosResult?.count ?? 0);
-
-  const cumpleañosMes = db
-    .select()
-    .from(schema.socios)
-    .where(sql`substr(${schema.socios.fechaNac}, 6, 2) = ${mes}`)
-    .all();
 
   return c.json({
     recaudado,
@@ -70,7 +72,6 @@ dashboard.get('/', (c) => {
     egresosMes,
     neto: recaudado - egresosMes,
     totalSocios,
-    cumpleañosMes,
   });
 });
 
