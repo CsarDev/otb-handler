@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, like, or, inArray, sql } from 'drizzle-orm';
-import type { AporteInherited, Socio } from '@otb/core';
+import type { Aporte, AporteInherited, Socio } from '@otb/core';
+import { cargarPermisosPorEstado, permite } from '../lib/permisos';
+import { generarAportes, definicionesPorIds, definicionesDeGrupos } from '../lib/aportes';
 
 const socios = new Hono();
 
@@ -167,6 +169,27 @@ function armarSocio(
     esActivo: fila.esActivo ?? 0,
     grupos: grupos.get(fila.id) ?? [],
   };
+}
+
+/**
+ * Unión de las definiciones que aplican al socio tras el guardado (D16):
+ * directas (`definicionesPorIds`, activas) + group-scoped de la membresía final
+ * (`definicionesDeGrupos`, D20), deduplicadas por id de definición.
+ */
+function definicionesFinales(
+  aporteIds: string[],
+  grupoPrimarioId: string | null,
+  grupoAdicionalIds: string[],
+): Aporte[] {
+  const porId = new Map<string, Aporte>();
+  for (const d of definicionesPorIds(aporteIds)) porId.set(d.id, d);
+
+  const grupoIds = new Set<string>();
+  if (grupoPrimarioId) grupoIds.add(grupoPrimarioId);
+  for (const g of grupoAdicionalIds) grupoIds.add(g);
+  for (const d of definicionesDeGrupos([...grupoIds])) porId.set(d.id, d);
+
+  return [...porId.values()];
 }
 
 socios.get('/', (c) => {
@@ -366,34 +389,73 @@ socios.post('/', async (c) => {
     ...(grupos.grupoPrimarioId ? { grupoPrimarioId: grupos.grupoPrimarioId } : {}),
   } as typeof schema.socios.$inferInsert;
 
-  db.transaction((tx) => {
+  // Sets FINALES del socio (POST: los declarados; no hay preservación).
+  const finalAporteIds = aportes.aporteIds;
+  const finalGrupoPrimario = grupos.grupoPrimarioId ?? null;
+  const finalGrupoAdicionales = grupos.grupoAdicionalIds ?? [];
+  const finalEstadoId = estado.estadoId;
+
+  const generados = db.transaction((tx) => {
     tx.insert(schema.socios)
       .values(values)
       .run();
 
-    for (const grupoId of grupos.grupoAdicionalIds ?? []) {
+    for (const grupoId of finalGrupoAdicionales) {
       tx.insert(schema.socioGrupos).values({ socioId: id, grupoId }).run();
     }
 
     // Asignaciones directas de aporte (multiselect, patrón socio_grupos).
     // Ausente/vacío → [] sin filas (no hay default-type fallback).
-    for (const aporteId of aportes.aporteIds) {
+    for (const aporteId of finalAporteIds) {
       tx.insert(schema.socioAportes).values({ socioId: id, aporteId }).run();
     }
+
+    // D16: generación en la MISMA transacción, sobre la unión (directa ∪ grupo)
+    // del set final. Dedup → solo filas faltantes; socio no permitido → 0
+    // registros, sin 409 (bulk-exclusion, D9).
+    const permisos = cargarPermisosPorEstado();
+    if (permite(permisos, finalEstadoId, 'aportes')) {
+      const definiciones = definicionesFinales(finalAporteIds, finalGrupoPrimario, finalGrupoAdicionales);
+      const socio = { id, estadoId: finalEstadoId, grupoPrimarioId: finalGrupoPrimario };
+      return generarAportes(
+        tx,
+        [socio],
+        definiciones,
+        new Map([[id, finalAporteIds]]),
+        new Map([[id, finalGrupoAdicionales]]),
+        new Date().getFullYear(), // D12: gestión actual, sin mes
+      );
+    }
+    return [];
   });
 
   const fila = selectSociosConEstado().where(eq(schema.socios.id, id)).get()!;
   const gruposMap = gruposPorSocio([id]);
   const directos = aportesDirectosPorSocio([id]);
   const inherited = aportesInheritedPorSocio([fila], gruposMap);
-  return c.json(armarSocio(fila, gruposMap, directos.get(id) ?? [], inherited.get(id) ?? []), 201);
+  // D16: shape estándar + generados (solo filas NUEVAS).
+  return c.json(
+    {
+      ...armarSocio(fila, gruposMap, directos.get(id) ?? [], inherited.get(id) ?? []),
+      generados: { count: generados.length },
+    },
+    201,
+  );
 });
 
 socios.put('/:id', async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
-  const existing = db.select({ id: schema.socios.id }).from(schema.socios).where(eq(schema.socios.id, id)).get();
+  const existing = db
+    .select({
+      id: schema.socios.id,
+      estadoId: schema.socios.estadoId,
+      grupoPrimarioId: schema.socios.grupoPrimarioId,
+    })
+    .from(schema.socios)
+    .where(eq(schema.socios.id, id))
+    .get();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
   const grupos = validarGrupos(body);
@@ -418,7 +480,28 @@ socios.put('/:id', async (c) => {
     aporteIds = aportes.aporteIds;
   }
 
-  db.transaction((tx) => {
+  // Sets FINALES en memoria (D16): declarado ?? preservado. La generación corre
+  // sobre estos sets dentro de la transacción de persistencia.
+  const finalAporteIds =
+    aporteIds ??
+    db
+      .select({ aporteId: schema.socioAportes.aporteId })
+      .from(schema.socioAportes)
+      .where(eq(schema.socioAportes.socioId, id))
+      .all()
+      .map((r) => r.aporteId);
+  const finalGrupoAdicionales =
+    grupos.grupoAdicionalIds ??
+    db
+      .select({ grupoId: schema.socioGrupos.grupoId })
+      .from(schema.socioGrupos)
+      .where(eq(schema.socioGrupos.socioId, id))
+      .all()
+      .map((r) => r.grupoId);
+  const finalGrupoPrimario = grupos.grupoPrimarioId !== undefined ? grupos.grupoPrimarioId : existing.grupoPrimarioId;
+  const finalEstadoId = estadoId ?? existing.estadoId;
+
+  const generados = db.transaction((tx) => {
     // Update parcial: campos editables + relaciones solo cuando el body los declara.
     // Los campos legacy (`aporteBase`/`tipoAporteId`) no son escribibles y se
     // ignoran (spec: PUT con legacy no tiene efecto, no 500).
@@ -453,13 +536,34 @@ socios.put('/:id', async (c) => {
         tx.insert(schema.socioAportes).values({ socioId: id, aporteId }).run();
       }
     }
+
+    // D16: generación sobre el set final (dedup → solo faltantes; removals
+    // NUNCA borran registros ya generados; no permitido → 0, sin 409).
+    const permisos = cargarPermisosPorEstado();
+    if (permite(permisos, finalEstadoId, 'aportes')) {
+      const definiciones = definicionesFinales(finalAporteIds, finalGrupoPrimario ?? null, finalGrupoAdicionales);
+      const socio = { id, estadoId: finalEstadoId, grupoPrimarioId: finalGrupoPrimario ?? null };
+      return generarAportes(
+        tx,
+        [socio],
+        definiciones,
+        new Map([[id, finalAporteIds]]),
+        new Map([[id, finalGrupoAdicionales]]),
+        new Date().getFullYear(), // D12: gestión actual, sin mes
+      );
+    }
+    return [];
   });
 
   const fila = selectSociosConEstado().where(eq(schema.socios.id, id)).get()!;
   const gruposMap = gruposPorSocio([id]);
   const directos = aportesDirectosPorSocio([id]);
   const inherited = aportesInheritedPorSocio([fila], gruposMap);
-  return c.json(armarSocio(fila, gruposMap, directos.get(id) ?? [], inherited.get(id) ?? []));
+  // D16: shape estándar + generados (solo filas NUEVAS).
+  return c.json({
+    ...armarSocio(fila, gruposMap, directos.get(id) ?? [], inherited.get(id) ?? []),
+    generados: { count: generados.length },
+  });
 });
 
 socios.post('/:id/baja', async (c) => {
