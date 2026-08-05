@@ -41,15 +41,37 @@ export type Aporte = {
 };
 
 export type AporteInput = {
-  id?: string; // POST acepta slug; PUT debe ignorarlo
   nombre: string;
   monto: number;
   recurrencia?: Recurrencia; // default 'mensual' (D6)
   inicio?: string | null;
   fin?: string | null;
   modalidadPago?: ModalidadPago; // default 'cuotas' (D4)
-  aplicaGrupoId?: string | null;
+  aplicaGrupoId?: string | null; // group-scoped: current members generate at assignment
   activo?: number; // default 1
+  socioIds?: string[]; // asignación directa (multiselect); cada id debe existir (D18)
+};
+
+/**
+ * Item de generación (ya devuelto por los endpoints manuales de generación;
+ * movido a core para compartirlo con la creación unificada, D15).
+ */
+export type AporteGenerado = {
+  id: string;
+  socioId: string;
+  aporteId: string | null;
+  mes: number;
+  gestion: number;
+  tipo: string;
+  montoBase: number;
+};
+
+export type GeneracionResult = { count: number; items: AporteGenerado[] };
+
+/** Respuesta 201 de POST /api/aportes-definicion (D15): catálogo completo + solo filas NUEVAS (D13). */
+export type CrearDefinicionResponse = {
+  definiciones: Aporte[];
+  generados: GeneracionResult;
 };
 
 /**
@@ -108,7 +130,11 @@ export type Socio = {
   grupos: { id: string; nombre: string }[]; // adicionales, en respuestas
   motivoBaja: string | null;
   fechaBaja: string | null;
+  generados?: { count: number }; // response-only en POST/PUT save (D16): solo filas NUEVAS
 };
+
+/** Shape de POST/PUT de socio con la cuenta de cobros generados en la transacción (D16). */
+export type SocioConGeneracion = Socio & { generados: { count: number } };
 
 // Input de POST/PUT de socio: `aporteIds` es opcional en el input (omitiéndolo
 // el PUT PRESERVA la asignación; ausente/[] en POST = sin asignación directa).
