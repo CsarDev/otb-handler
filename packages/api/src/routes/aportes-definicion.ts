@@ -1,13 +1,17 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq } from 'drizzle-orm';
-import type { ModalidadPago, Recurrencia } from '@otb/core';
+import { eq, inArray } from 'drizzle-orm';
+import type { Aporte, ModalidadPago, Recurrencia } from '@otb/core';
+import { cargarPermisosPorEstado, permite } from '../lib/permisos';
+import { generarAportes } from '../lib/aportes';
 
 // Router CRUD de definiciones de aporte (`/api/aportes-definicion`). El aporte
-// ES la definición (`aportes_definicion`), con slug `id` provisto por el cliente
-// e inmutable tras la creación (D7). Valida el modelo corregido (D1, D4, D6,
-// D7) y guarda el DELETE con 409 cuando la definición tiene referencias
-// (D10): asignaciones en `socio_aportes` O registros generados con `aporte_id`.
+// ES la definición (`aportes_definicion`). El `id` es generado por el SERVER
+// (UUID, D14): un `id` del body se IGNORA (nunca se valida, nunca se rechaza).
+// POST acepta `socioIds?` (asignación directa, D18) y genera los cobros en la
+// MISMA transacción para el target set (socioIds ∪ miembros actuales del grupo,
+// D15). DELETE conserva el guard 409 (D10): asignaciones en `socio_aportes` O
+// registros generados con `aporte_id`.
 
 const recurrencias: Recurrencia[] = ['mensual', 'anual', 'unico', 'extraordinario'];
 const modalidades: ModalidadPago[] = ['cuotas', 'parciales', 'pago_unico'];
@@ -84,6 +88,33 @@ function validarAporte(
   };
 }
 
+/**
+ * Valida `socioIds` (D18): cada id DEBE referenciar un socio existente, si no →
+ * 400 ANTES de cualquier insert (sin definición, sin asignación, sin registros).
+ * Ausente/null → sin asignación directa; no-array → 400.
+ */
+function validarSocioIds(body: Record<string, unknown>): { socioIds: string[] } | { error: string; status: 400 } {
+  if (body.socioIds === undefined || body.socioIds === null) {
+    return { socioIds: [] };
+  }
+  if (!Array.isArray(body.socioIds)) {
+    return { error: 'socioIds must be an array', status: 400 };
+  }
+
+  const socioIds = [...new Set(body.socioIds.map(String))];
+  if (socioIds.length === 0) return { socioIds: [] };
+
+  const existentes = db
+    .select({ id: schema.socios.id })
+    .from(schema.socios)
+    .where(inArray(schema.socios.id, socioIds))
+    .all();
+  if (existentes.length !== socioIds.length) {
+    return { error: 'socioIds contains an invalid socio', status: 400 };
+  }
+  return { socioIds };
+}
+
 const aportesDefinicion = new Hono();
 
 aportesDefinicion.get('/', (c) => {
@@ -92,23 +123,100 @@ aportesDefinicion.get('/', (c) => {
 
 aportesDefinicion.post('/', async (c) => {
   const body = await c.req.json();
+
   const v = validarAporte(body);
   if (!v.ok) return c.json({ error: v.error }, 400);
 
-  // Slug del cliente (D7); si no se provee se genera uno. Duplicado → 400.
-  const id = body.id != null && String(body.id).trim() !== '' ? String(body.id) : crypto.randomUUID();
-  const duplicado = db
-    .select({ id: schema.aportesDefinicion.id })
-    .from(schema.aportesDefinicion)
-    .where(eq(schema.aportesDefinicion.id, id))
-    .get();
-  if (duplicado) return c.json({ error: 'Ya existe un aporte con ese id' }, 400);
+  // D18: validación ANTES de cualquier insert (no definición, no asignación, no registros).
+  const sids = validarSocioIds(body);
+  if ('error' in sids) return c.json({ error: sids.error }, sids.status);
 
-  db.insert(schema.aportesDefinicion)
-    .values({ id, ...v.values })
-    .run();
+  // D14: el id SIEMPRE lo genera el server; un `id` del body se IGNORA.
+  const id = crypto.randomUUID();
+  const socioIds = sids.socioIds;
+  const grupoId = v.values.aplicaGrupoId;
+  // D12: gestión actual, SIN mes (los endpoints manuales conservan su mes/gestion).
+  const gestion = new Date().getFullYear();
 
-  return c.json(db.select().from(schema.aportesDefinicion).all(), 201);
+  const generados = db.transaction((tx) => {
+    // 1) Insertar la definición con el UUID del server.
+    tx.insert(schema.aportesDefinicion).values({ id, ...v.values }).run();
+
+    // 2) Asignación directa: socio_aportes para cada socioId (D15 paso 3).
+    for (const sid of socioIds) {
+      tx.insert(schema.socioAportes).values({ socioId: sid, aporteId: id }).run();
+    }
+
+    // 3) Target set = socioIds ∪ miembros ACTUALES del grupo (primario O
+    //    adicional), deduplicado por socioId (solape genera una sola vez).
+    const target = new Set<string>(socioIds);
+    if (grupoId) {
+      const primarios = tx
+        .select({ id: schema.socios.id })
+        .from(schema.socios)
+        .where(eq(schema.socios.grupoPrimarioId, grupoId))
+        .all();
+      for (const p of primarios) target.add(p.id);
+
+      const adicionales = tx
+        .select({ socioId: schema.socioGrupos.socioId })
+        .from(schema.socioGrupos)
+        .where(eq(schema.socioGrupos.grupoId, grupoId))
+        .all();
+      for (const a of adicionales) target.add(a.socioId);
+    }
+    const idsTarget = [...target];
+
+    // 4) Socios target + sus grupos adicionales (batch, sin N+1).
+    const socios = idsTarget.length
+      ? tx
+          .select({
+            id: schema.socios.id,
+            estadoId: schema.socios.estadoId,
+            grupoPrimarioId: schema.socios.grupoPrimarioId,
+          })
+          .from(schema.socios)
+          .where(inArray(schema.socios.id, idsTarget))
+          .all()
+      : [];
+    const gruposAdicionales = new Map<string, string[]>();
+    if (idsTarget.length) {
+      const filasGrupos = tx
+        .select({ socioId: schema.socioGrupos.socioId, grupoId: schema.socioGrupos.grupoId })
+        .from(schema.socioGrupos)
+        .where(inArray(schema.socioGrupos.socioId, idsTarget))
+        .all();
+      for (const f of filasGrupos) {
+        const arr = gruposAdicionales.get(f.socioId) ?? [];
+        arr.push(f.grupoId);
+        gruposAdicionales.set(f.socioId, arr);
+      }
+    }
+
+    // 5) Bulk-exclusion (D15): los socios cuyo estado no permite 'aportes'
+    //    conservan la asignación pero generan 0 registros; la respuesta es 201
+    //    (nunca 409, nunca 400 — a diferencia de /bulk).
+    const permisos = cargarPermisosPorEstado();
+    const permitidos = socios.filter((s) => permite(permisos, s.estadoId, 'aportes'));
+
+    // 6) Directos: los asignados vía socioIds sostienen la definición por la
+    //    join recién insertada; los miembros del grupo la sostienen vía
+    //    socioHoldsAporte (join dinámica, D5 — sin filas socio_aportes).
+    const directos = new Map<string, string[]>();
+    for (const sid of socioIds) directos.set(sid, [id]);
+
+    const defNueva: Aporte = { id, ...v.values };
+    return generarAportes(tx, permitidos, [defNueva], directos, gruposAdicionales, gestion);
+  });
+
+  // D15: 201 { definiciones: catálogo COMPLETO, generados: solo filas NUEVAS (D13) }.
+  return c.json(
+    {
+      definiciones: db.select().from(schema.aportesDefinicion).all(),
+      generados: { count: generados.length, items: generados },
+    },
+    201,
+  );
 });
 
 aportesDefinicion.put('/:id', async (c) => {
@@ -124,8 +232,8 @@ aportesDefinicion.put('/:id', async (c) => {
   const v = validarAporte(body);
   if (!v.ok) return c.json({ error: v.error }, 400);
 
-  // PUT NO renombra el id (D7): ignora cualquier `id` enviado en el body y
-  // actualiza el identificado por la ruta.
+  // PUT es field-edit only (D19): NO acepta socioIds, NO cambia asignaciones,
+  // NO genera. Ignora cualquier `id` del body (D14) y actualiza el de la ruta.
   db.update(schema.aportesDefinicion)
     .set(v.values)
     .where(eq(schema.aportesDefinicion.id, id))
