@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 import { socioPermiteUI } from '../lib/permisos';
-import { Badge } from '@otb/ui';
+import { Badge, MultiSelect } from '@otb/ui';
 import type { Aporte, AporteInput, AporteRegistro, Movimiento } from '@otb/core';
 
 const inputCls =
@@ -27,10 +27,9 @@ const MODALIDAD_LABEL: Record<string, string> = {
 /**
  * Schema del form de DEFINICIÓN de aporte (crear/editar). El `id` es generado
  * por el SERVER (UUID, D14) — nunca se pide en el form; en edición se muestra
- * read-only. La asignación ("Asignar a") vive en el state del componente y se
- * agrega al payload al crear: `socioIds` (modo socios) y/o `aplicaGrupoId`
- * (modo grupo). En edición PUT es field-edit only (D19): se envía solo el
- * grupo (campo de definición), nunca socioIds.
+ * read-only. La asignación vive en el state del componente (MultiSelects D32,
+ * SUPERSEDE D21): `socioIds` + `grupoIds` se agregan al payload SIEMPRE en
+ * crear y editar (replace-when-declared; `[]` = sin asignación / global).
  */
 const definicionSchema = z.object({
   nombre: z.string().min(1, 'Requerido'),
@@ -39,7 +38,8 @@ const definicionSchema = z.object({
   inicio: z.string().nullish().default(''),
   fin: z.string().nullish().default(''),
   modalidadPago: z.enum(['cuotas', 'parciales', 'pago_unico']),
-  aplicaGrupoId: z.string().nullish().default(''),
+  grupoIds: z.array(z.string()).optional(),
+  socioIds: z.array(z.string()).optional(),
   activo: z.boolean().default(true),
 });
 
@@ -52,7 +52,8 @@ const defaultDefinicion: DefinicionForm = {
   inicio: '',
   fin: '',
   modalidadPago: 'cuotas',
-  aplicaGrupoId: '',
+  grupoIds: [],
+  socioIds: [],
   activo: true,
 };
 
@@ -162,9 +163,9 @@ export default function AportesPage() {
   const [definicionError, setDefinicionError] = useState<string | null>(null);
   const [savingDefinicion, setSavingDefinicion] = useState(false);
 
-  /* ── "Asignar a" (D21): modos exclusivos a nadie / a socios / a un grupo ── */
-  const [asignar, setAsignar] = useState<'nadie' | 'socios' | 'grupo'>('nadie');
+  /* ── "Asignar a" (D32, SUPERSEDE D21): dos MultiSelects — Socios + Grupos ── */
   const [selectedSocioIds, setSelectedSocioIds] = useState<string[]>([]);
+  const [selectedGrupoIds, setSelectedGrupoIds] = useState<string[]>([]);
 
   /* ── Toast de conteo generado (D22) ── */
   const [toast, setToast] = useState<string | null>(null);
@@ -228,8 +229,8 @@ export default function AportesPage() {
   function openDefinicionCreate() {
     setEditingDefinicion(null);
     setDefinicionError(null);
-    setAsignar('nadie');
     setSelectedSocioIds([]);
+    setSelectedGrupoIds([]);
     definicionForm.reset(defaultDefinicion);
     setShowDefinicionForm(true);
   }
@@ -237,8 +238,10 @@ export default function AportesPage() {
   function openDefinicionEdit(a: Aporte) {
     setEditingDefinicion(a);
     setDefinicionError(null);
-    setAsignar('nadie');
-    setSelectedSocioIds([]);
+    // D32: pre-fill de los MultiSelects desde el catálogo hidratado (D28) —
+    // el GET expone `socioIds` + `grupoIds` por definición.
+    setSelectedSocioIds((a as Aporte & { socioIds?: string[] }).socioIds ?? []);
+    setSelectedGrupoIds(a.grupoIds ?? []);
     definicionForm.reset({
       nombre: a.nombre,
       monto: a.monto,
@@ -246,23 +249,11 @@ export default function AportesPage() {
       inicio: a.inicio ?? '',
       fin: a.fin ?? '',
       modalidadPago: a.modalidadPago,
-      aplicaGrupoId: a.aplicaGrupoId ?? '',
+      grupoIds: a.grupoIds ?? [],
+      socioIds: (a as Aporte & { socioIds?: string[] }).socioIds ?? [],
       activo: a.activo === 1,
     });
     setShowDefinicionForm(true);
-  }
-
-  /** Modos "Asignar a" exclusivos (D21): cambiar de modo limpia el otro campo. */
-  function handleAsignarChange(mode: 'nadie' | 'socios' | 'grupo') {
-    setAsignar(mode);
-    if (mode !== 'grupo') definicionForm.setValue('aplicaGrupoId', '');
-    if (mode !== 'socios') setSelectedSocioIds([]);
-  }
-
-  function toggleSocio(id: string) {
-    setSelectedSocioIds((current) =>
-      current.includes(id) ? current.filter((s) => s !== id) : [...current, id],
-    );
   }
 
   async function handleDefinicionSubmit(data: DefinicionForm) {
@@ -274,46 +265,37 @@ export default function AportesPage() {
     setDefinicionError(null);
     setSavingDefinicion(true);
     try {
+      // D32 (SUPERSEDE D21): crear Y editar declaran SIEMPRE ambos arrays
+      // (replace-when-declared; `[]` = sin asignación / global).
+      const base: AporteInput = {
+        nombre: data.nombre.trim(),
+        monto: data.monto,
+        recurrencia: data.recurrencia,
+        inicio: data.inicio || null,
+        fin: data.fin || null,
+        modalidadPago: data.modalidadPago,
+        activo: data.activo ? 1 : 0,
+        socioIds: selectedSocioIds,
+        grupoIds: selectedGrupoIds,
+      };
       if (editingDefinicion) {
-        // D19: PUT es field-edit only — solo campos de definición (incluye el
-        // grupo como campo editable); sin socioIds, sin asignaciones, sin generación.
-        await updateAporte(editingDefinicion.id, {
-          nombre: data.nombre.trim(),
-          monto: data.monto,
-          recurrencia: data.recurrencia,
-          inicio: data.inicio || null,
-          fin: data.fin || null,
-          modalidadPago: data.modalidadPago,
-          aplicaGrupoId: data.aplicaGrupoId || null,
-          activo: data.activo ? 1 : 0,
-        });
+        // D27: PUT acepta socioIds?/grupoIds? y devuelve { definiciones, generados }.
+        const generados = await updateAporte(editingDefinicion.id, base);
+        // D22: toast del conteo generado tras editar (D32); refrescar cobros.
+        showToast(`Se generaron ${generados.count} cobro(s)`);
+        void fetchAporteRegistros();
       } else {
-        // D15: form unificado — payload sin `id` (server UUID, D14) con la
-        // asignación elegida en "Asignar a" (D21).
-        const payload: AporteInput = {
-          nombre: data.nombre.trim(),
-          monto: data.monto,
-          recurrencia: data.recurrencia,
-          inicio: data.inicio || null,
-          fin: data.fin || null,
-          modalidadPago: data.modalidadPago,
-          activo: data.activo ? 1 : 0,
-        };
-        if (asignar === 'socios' && selectedSocioIds.length > 0) {
-          payload.socioIds = selectedSocioIds;
-        }
-        if (asignar === 'grupo' && data.aplicaGrupoId) {
-          payload.aplicaGrupoId = data.aplicaGrupoId;
-        }
-        const generados = await addAporte(payload);
+        // D15/D26: form unificado — payload sin `id` (server UUID, D14) con la
+        // asignación elegida en los MultiSelects (D32).
+        const generados = await addAporte(base);
         // D22: feedback del conteo generado; luego se refrescan los cobros.
         showToast(`Se generaron ${generados.count} cobro(s)`);
         void fetchAporteRegistros();
       }
       setShowDefinicionForm(false);
       setEditingDefinicion(null);
-      setAsignar('nadie');
       setSelectedSocioIds([]);
+      setSelectedGrupoIds([]);
     } catch (e) {
       setDefinicionError((e as Error).message);
     } finally {
@@ -420,7 +402,8 @@ export default function AportesPage() {
 
             <div className="space-y-2">
               {aportes.map((a) => {
-                const grupo = a.aplicaGrupoId ? grupos.find((g) => g.id === a.aplicaGrupoId) : null;
+                const visibles = a.grupoIds.length > 3 ? a.grupoIds.slice(0, 2) : a.grupoIds;
+                const overflow = a.grupoIds.length - visibles.length;
                 return (
                   <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-gray-50 px-4 py-2.5">
                     <div className="min-w-0 flex-1">
@@ -429,8 +412,20 @@ export default function AportesPage() {
                         {a.activo === 1
                           ? <Badge variant="green">activo</Badge>
                           : <Badge variant="default">inactivo</Badge>}
-                        {a.aplicaGrupoId && (
-                          <Badge variant="blue">Grupo: {grupo?.nombre ?? a.aplicaGrupoId}</Badge>
+                        {a.grupoIds.length === 0 ? (
+                          <Badge variant="default">global</Badge>
+                        ) : (
+                          <>
+                            {visibles.map((gid) => {
+                              const grupo = grupos.find((g) => g.id === gid);
+                              return (
+                                <Badge key={gid} variant="blue">{grupo?.nombre ?? gid}</Badge>
+                              );
+                            })}
+                            {overflow > 0 && (
+                              <Badge variant="blue">+{overflow}</Badge>
+                            )}
+                          </>
                         )}
                       </div>
                       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
@@ -650,106 +645,73 @@ export default function AportesPage() {
                     <option value="pago_unico">Pago único</option>
                   </select>
                 </div>
-                {editingDefinicion ? (
-                  <div>
-                    <label className={labelCls}>Aplica a grupo <span className="font-normal text-gray-400">(opcional)</span></label>
-                    <select {...definicionForm.register('aplicaGrupoId')} className={inputCls}>
-                      <option value="">Global (sin grupo)</option>
-                      {grupos.map((g) => (<option key={g.id} value={g.id}>{g.nombre}</option>))}
-                    </select>
-                  </div>
-                ) : (
-                  <div className="flex items-end pb-1">
-                    <p className="text-xs text-gray-400">La asignación se elige en "Asignar a".</p>
-                  </div>
-                )}
               </div>
 
-              {/* ── "Asignar a" — SOLO al crear (D21): modos exclusivos ── */}
-              {!editingDefinicion && (
-                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <label className={labelCls}>Asignar a</label>
-                  <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-700">
-                    <label className="flex cursor-pointer items-center gap-2">
-                      <input type="radio" name="asignar" checked={asignar === 'nadie'} onChange={() => handleAsignarChange('nadie')} className="accent-blue-600" />
-                      A nadie (solo crear)
-                    </label>
-                    <label className="flex cursor-pointer items-center gap-2">
-                      <input type="radio" name="asignar" checked={asignar === 'socios'} onChange={() => handleAsignarChange('socios')} className="accent-blue-600" />
-                      A socios
-                    </label>
-                    <label className="flex cursor-pointer items-center gap-2">
-                      <input type="radio" name="asignar" checked={asignar === 'grupo'} onChange={() => handleAsignarChange('grupo')} className="accent-blue-600" />
-                      A un grupo
-                    </label>
+              {/* ── "Asignar a" (D32, SUPERSEDE D21): MultiSelects en crear Y editar ── */}
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <div className="space-y-3">
+                  <div>
+                    <label className={labelCls}>Socios (solo con permiso de "aportes")</label>
+                    <MultiSelect
+                      options={permitidos.map((s) => ({ value: s.id, label: `${s.nombre} ${s.apellidoPaterno}` }))}
+                      selected={selectedSocioIds}
+                      onChange={setSelectedSocioIds}
+                      placeholder="Buscar socio..."
+                      searchPlaceholder="Buscar por nombre o apellido"
+                      emptyLabel={permitidos.length === 0 ? 'Ningún socio tiene permiso de "aportes".' : 'Sin coincidencias'}
+                    />
+                    <p className="mt-1 text-xs text-gray-400">{selectedSocioIds.length} socio(s) seleccionado(s)</p>
                   </div>
-
-                  {asignar === 'socios' && (
-                    <div className="mt-3">
-                      <label className={labelCls}>Socios (solo con permiso de "aportes")</label>
-                      <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
-                        {permitidos.map((s) => {
-                          const checked = selectedSocioIds.includes(s.id);
-                          return (
-                            <label key={s.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
-                              <input type="checkbox" checked={checked} onChange={() => toggleSocio(s.id)} className="rounded border-gray-300" />
-                              {s.nombre} {s.apellidoPaterno}
-                            </label>
-                          );
-                        })}
-                        {permitidos.length === 0 && <p className="px-2 py-1 text-sm text-gray-400">Ningún socio tiene permiso de "aportes".</p>}
-                      </div>
-                      <p className="mt-1 text-xs text-gray-400">{selectedSocioIds.length} socio(s) seleccionado(s)</p>
-                    </div>
-                  )}
-
-                  {asignar === 'grupo' && (
-                    <div className="mt-3">
-                      <label className={labelCls}>Grupo</label>
-                      <select {...definicionForm.register('aplicaGrupoId')} className={inputCls}>
-                        <option value="">Seleccionar grupo...</option>
-                        {grupos.map((g) => (<option key={g.id} value={g.id}>{g.nombre}</option>))}
-                      </select>
-                      <p className="mt-1 text-xs text-gray-400">
-                        Se generan cobros para los miembros ACTUALES del grupo al crear.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Hint de conteo en vivo: meses × target para la gestión actual (D21); la deduplicación (D13) puede reducir el total. */}
-                  {asignar !== 'nadie' && (
-                    (() => {
-                      const gestion = new Date().getFullYear();
-                      const meses = mesesParaDefinicionUI(
-                        {
-                          recurrencia: definicionForm.watch('recurrencia'),
-                          inicio: definicionForm.watch('inicio') || null,
-                          fin: definicionForm.watch('fin') || null,
-                        },
-                        gestion,
-                      );
-                      const target = asignar === 'socios'
-                        ? selectedSocioIds.length
-                        : (() => {
-                            const gid = definicionForm.watch('aplicaGrupoId');
-                            if (!gid) return 0;
-                            return socios.filter(
-                              (s) => s.grupoPrimarioId === gid || s.grupos.some((g) => g.id === gid),
-                            ).length;
-                          })();
-                      const estimado = meses.length * target;
-                      return (
-                        <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                          ≈ {estimado} cobro(s) estimado(s) para la gestión {gestion}
-                          {meses.length === 0
-                            ? ' — la vigencia no cubre la gestión actual'
-                            : ' (la deduplicación puede reducir el total)'}
-                        </p>
-                      );
-                    })()
-                  )}
+                  <div>
+                    <label className={labelCls}>Grupos</label>
+                    <MultiSelect
+                      options={grupos.map((g) => ({ value: g.id, label: g.nombre }))}
+                      selected={selectedGrupoIds}
+                      onChange={setSelectedGrupoIds}
+                      placeholder="Buscar grupo..."
+                      searchPlaceholder="Buscar por nombre"
+                      emptyLabel="Sin coincidencias"
+                    />
+                    <p className="mt-1 text-xs text-gray-400">
+                      Se generan cobros para los miembros ACTUALES de los grupos seleccionados.
+                    </p>
+                  </div>
                 </div>
-              )}
+
+                {/* Hint de conteo en vivo: meses × unión deduplicada de miembros de TODOS
+                    los grupos seleccionados ∪ socios seleccionados (D32); la deduplicación
+                    (D13) puede reducir el total real. */}
+                {(() => {
+                  const gestion = new Date().getFullYear();
+                  const meses = mesesParaDefinicionUI(
+                    {
+                      recurrencia: definicionForm.watch('recurrencia'),
+                      inicio: definicionForm.watch('inicio') || null,
+                      fin: definicionForm.watch('fin') || null,
+                    },
+                    gestion,
+                  );
+                  const miembrosGrupos = new Set<string>();
+                  for (const gid of selectedGrupoIds) {
+                    for (const s of socios) {
+                      if (s.grupoPrimarioId === gid || s.grupos.some((g) => g.id === gid)) {
+                        miembrosGrupos.add(s.id);
+                      }
+                    }
+                  }
+                  const target = new Set<string>([...selectedSocioIds, ...miembrosGrupos]).size;
+                  if (target === 0) return null;
+                  const estimado = meses.length * target;
+                  return (
+                    <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                      ≈ {estimado} cobro(s) estimado(s) para la gestión {gestion}
+                      {meses.length === 0
+                        ? ' — la vigencia no cubre la gestión actual'
+                        : ' (la deduplicación puede reducir el total)'}
+                    </p>
+                  );
+                })()}
+              </div>
               <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
                 <input type="checkbox" {...definicionForm.register('activo')} className="rounded border-gray-300" />
                 Activo (se puede asignar a socios y generar cobros)
