@@ -1,6 +1,11 @@
 -- Migración 0007 — Aplicación M:N definición↔grupo (D23). ADITIVO primero
--- (join table + backfill de `aplica_grupo_id`); el bloque DROP de la columna
--- legacy (recreate de `aportes_definicion`) va AL FINAL.
+-- (join table + backfill de `aplica_grupo_id`); el DROP de la columna legacy
+-- va AL FINAL. Usa `ALTER TABLE ... DROP COLUMN` nativo (SQLite 3.35+), NO el
+-- recreate `__new_` que genera drizzle-kit: el migrator de drizzle envuelve
+-- todo en UNA transacción, donde `PRAGMA foreign_keys=OFF` es un no-op, y el
+-- DROP TABLE del recreate hace un DELETE implícito que viola las FKs de
+-- `aportes`/`socio_aportes` cuando la DB tiene datos (verificado en la DB
+-- real: 222 registros). DROP COLUMN no toca las filas y respeta `foreign_keys=ON`.
 CREATE TABLE `aportes_definicion_grupos` (
 	`definition_id` text NOT NULL,
 	`grupo_id` text NOT NULL,
@@ -16,19 +21,5 @@ SELECT id, aplica_grupo_id
 FROM `aportes_definicion`
 WHERE aplica_grupo_id IS NOT NULL;
 --> statement-breakpoint
-PRAGMA foreign_keys=OFF;--> statement-breakpoint
-CREATE TABLE `__new_aportes_definicion` (
-	`id` text PRIMARY KEY NOT NULL,
-	`nombre` text NOT NULL,
-	`monto` real NOT NULL,
-	`recurrencia` text DEFAULT 'mensual' NOT NULL,
-	`inicio` text,
-	`fin` text,
-	`modalidad_pago` text DEFAULT 'cuotas' NOT NULL,
-	`activo` integer DEFAULT 1 NOT NULL
-);
---> statement-breakpoint
-INSERT INTO `__new_aportes_definicion`("id", "nombre", "monto", "recurrencia", "inicio", "fin", "modalidad_pago", "activo") SELECT "id", "nombre", "monto", "recurrencia", "inicio", "fin", "modalidad_pago", "activo" FROM `aportes_definicion`;--> statement-breakpoint
-DROP TABLE `aportes_definicion`;--> statement-breakpoint
-ALTER TABLE `__new_aportes_definicion` RENAME TO `aportes_definicion`;--> statement-breakpoint
-PRAGMA foreign_keys=ON;
+-- DROP de la columna legacy (la join ya es la única fuente de verdad, D1).
+ALTER TABLE `aportes_definicion` DROP COLUMN `aplica_grupo_id`;
