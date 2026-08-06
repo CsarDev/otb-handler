@@ -198,7 +198,7 @@ describe('Socios — PUT reemplazo atómico / preservación / generación (D16)'
 describe('Socios — herencia dinámica por grupo (aportesInherited, D5) + generación por membresía (D16)', () => {
   it('hereda del grupo primario', async () => {
     const g1 = await crearGrupo('Grupo A');
-    const def = await crearDefinicion({ nombre: 'Fondo Grupo A', monto: 10, aplicaGrupoId: g1 });
+    const def = await crearDefinicion({ nombre: 'Fondo Grupo A', monto: 10, grupoIds: [g1] });
 
     const creado = await crearSocio({ grupoPrimarioId: g1, aporteIds: [] });
     const { data } = await requestJson(`/api/socios/${creado.data.id}`);
@@ -211,7 +211,7 @@ describe('Socios — herencia dinámica por grupo (aportesInherited, D5) + gener
 
   it('hereda de un grupo adicional (secundario)', async () => {
     const g2 = await crearGrupo('Grupo B');
-    const def = await crearDefinicion({ nombre: 'Fondo Grupo B', monto: 10, aplicaGrupoId: g2 });
+    const def = await crearDefinicion({ nombre: 'Fondo Grupo B', monto: 10, grupoIds: [g2] });
 
     const creado = await crearSocio({ grupoAdicionalIds: [g2], aporteIds: [] });
     const { data } = await requestJson(`/api/socios/${creado.data.id}`);
@@ -224,8 +224,8 @@ describe('Socios — herencia dinámica por grupo (aportesInherited, D5) + gener
   it('hereda de primario y secundario a la vez, cada uno con su grupo fuente', async () => {
     const g1 = await crearGrupo('Grupo A');
     const g2 = await crearGrupo('Grupo B');
-    const d1 = await crearDefinicion({ nombre: 'Fondo A', monto: 10, aplicaGrupoId: g1 });
-    const d2 = await crearDefinicion({ nombre: 'Fondo B', monto: 20, aplicaGrupoId: g2 });
+    const d1 = await crearDefinicion({ nombre: 'Fondo A', monto: 10, grupoIds: [g1] });
+    const d2 = await crearDefinicion({ nombre: 'Fondo B', monto: 20, grupoIds: [g2] });
 
     const creado = await crearSocio({ grupoPrimarioId: g1, grupoAdicionalIds: [g2], aporteIds: [] });
     const { data } = await requestJson(`/api/socios/${creado.data.id}`);
@@ -237,9 +237,46 @@ describe('Socios — herencia dinámica por grupo (aportesInherited, D5) + gener
     expect(heredados.find((i) => i.id === d2.id)?.grupoId).toBe(g2);
   });
 
+  it('D29: una definición que aplica a VARIOS grupos del socio = UN chip, atribuido al primario', async () => {
+    const g1 = await crearGrupo('Grupo A');
+    const g2 = await crearGrupo('Grupo B');
+    // Fondo X aplica a g1 (primario del socio) Y a g2 (adicional).
+    const def = await crearDefinicion({ nombre: 'Fondo X', monto: 10, grupoIds: [g1, g2] });
+
+    const creado = await crearSocio({ grupoPrimarioId: g1, grupoAdicionalIds: [g2], aporteIds: [] });
+    const { data } = await requestJson(`/api/socios/${creado.data.id}`);
+
+    // DEF-DEDUP: un solo chip, NO uno por grupo (R2/D29).
+    expect(data.aportesInherited).toHaveLength(1);
+    expect(data.aportesInherited[0]).toEqual({
+      id: def.id,
+      nombre: 'Fondo X',
+      grupoId: g1, // orden ESTABLE: primario primero (D29)
+      grupoNombre: 'Grupo A',
+    });
+  });
+
+  it('D29: sin grupo primario, el chip se atribuye al grupo adicional con menor rowid (orden estable)', async () => {
+    const g1 = await crearGrupo('Grupo A');
+    const g2 = await crearGrupo('Grupo B');
+    const def = await crearDefinicion({ nombre: 'Fondo X', monto: 10, grupoIds: [g1, g2] });
+
+    // Sin primario: el orden estable es el de inserción en socio_grupos (rowid).
+    const creado = await crearSocio({ grupoAdicionalIds: [g2, g1], aporteIds: [] }); // g2 se inserta PRIMERO
+    const { data } = await requestJson(`/api/socios/${creado.data.id}`);
+
+    expect(data.aportesInherited).toHaveLength(1);
+    expect(data.aportesInherited[0]).toEqual({
+      id: def.id,
+      nombre: 'Fondo X',
+      grupoId: g2, // primer grupo en orden rowid
+      grupoNombre: 'Grupo B',
+    });
+  });
+
   it('INVERTIDO: un miembro FUTURO hereda Y recibe registros al momento de la membresía', async () => {
     const g1 = await crearGrupo('Grupo A');
-    const def = await crearDefinicion({ nombre: 'Fondo A', monto: 10, recurrencia: 'unico', aplicaGrupoId: g1 });
+    const def = await crearDefinicion({ nombre: 'Fondo A', monto: 10, recurrencia: 'unico', grupoIds: [g1] });
 
     const creado = await crearSocio({ grupoPrimarioId: g1, aporteIds: [] });
     const id = creado.data.id;
@@ -256,7 +293,7 @@ describe('Socios — herencia dinámica por grupo (aportesInherited, D5) + gener
 
   it('re-afirmar la membresía (PUT con los mismos grupos) no duplica registros', async () => {
     const g1 = await crearGrupo('Grupo A');
-    const def = await crearDefinicion({ nombre: 'Fondo A', monto: 10, recurrencia: 'unico', aplicaGrupoId: g1 });
+    const def = await crearDefinicion({ nombre: 'Fondo A', monto: 10, recurrencia: 'unico', grupoIds: [g1] });
     const creado = await crearSocio({ grupoPrimarioId: g1, aporteIds: [] });
     const id = creado.data.id;
     expect(filas('SELECT * FROM aportes WHERE socio_id = ?', [id])).toHaveLength(1);
@@ -274,7 +311,7 @@ describe('Socios — herencia dinámica por grupo (aportesInherited, D5) + gener
 
   it('quitar al socio del grupo deja de heredar y NO borra los registros generados', async () => {
     const g2 = await crearGrupo('Grupo B');
-    const def = await crearDefinicion({ nombre: 'Fondo B', monto: 20, recurrencia: 'unico', aplicaGrupoId: g2 });
+    const def = await crearDefinicion({ nombre: 'Fondo B', monto: 20, recurrencia: 'unico', grupoIds: [g2] });
 
     // s1: solo herencia (sin directa) → al salir del grupo pierde ap-g2 pero
     // los cobros generados al entrar quedan (removal nunca borra registros).
@@ -300,7 +337,7 @@ describe('Socios — herencia dinámica por grupo (aportesInherited, D5) + gener
 
   it('una asignación directa deduplica el chip heredado', async () => {
     const g1 = await crearGrupo('Grupo A');
-    const def = await crearDefinicion({ nombre: 'Fondo A', monto: 10, aplicaGrupoId: g1 });
+    const def = await crearDefinicion({ nombre: 'Fondo A', monto: 10, grupoIds: [g1] });
 
     const creado = await crearSocio({ grupoPrimarioId: g1, aporteIds: [def.id] });
     const { data } = await requestJson(`/api/socios/${creado.data.id}`);
@@ -311,7 +348,7 @@ describe('Socios — herencia dinámica por grupo (aportesInherited, D5) + gener
 
   it('los chips heredados son read-only: PUT sin aporteIds no los altera ni los remueve', async () => {
     const g1 = await crearGrupo('Grupo A');
-    const def = await crearDefinicion({ nombre: 'Fondo A', monto: 10, aplicaGrupoId: g1 });
+    const def = await crearDefinicion({ nombre: 'Fondo A', monto: 10, grupoIds: [g1] });
 
     const creado = await crearSocio({ grupoPrimarioId: g1, aporteIds: [] });
     const id = creado.data.id;

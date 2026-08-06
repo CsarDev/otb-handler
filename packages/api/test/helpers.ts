@@ -57,6 +57,7 @@ export function limpiarDatos(): void {
   sqlite.exec(`
     DELETE FROM movimientos;
     DELETE FROM socio_aportes;
+    DELETE FROM aportes_definicion_grupos;
     DELETE FROM aportes;
     DELETE FROM multas;
     DELETE FROM asistencia;
@@ -66,11 +67,11 @@ export function limpiarDatos(): void {
     DELETE FROM socios;
     DELETE FROM aportes_definicion;
     DELETE FROM grupos;
-    INSERT INTO aportes_definicion (id, nombre, monto, recurrencia, inicio, fin, modalidad_pago, aplica_grupo_id, activo) VALUES
-      ('ap-mensual',  'Cuota Social Mensual', 50, 'mensual', NULL, NULL, 'cuotas', NULL, 1),
-      ('ap-familiar', 'Aporte Familiar',      30, 'mensual', NULL, NULL, 'cuotas', NULL, 1),
-      ('ap-jubilado', 'Aporte Jubilado',      25, 'mensual', NULL, NULL, 'cuotas', NULL, 1),
-      ('ap-honorario','Aporte Honorario',      0, 'mensual', NULL, NULL, 'cuotas', NULL, 1);
+    INSERT INTO aportes_definicion (id, nombre, monto, recurrencia, inicio, fin, modalidad_pago, activo) VALUES
+      ('ap-mensual',  'Cuota Social Mensual', 50, 'mensual', NULL, NULL, 'cuotas', 1),
+      ('ap-familiar', 'Aporte Familiar',      30, 'mensual', NULL, NULL, 'cuotas', 1),
+      ('ap-jubilado', 'Aporte Jubilado',      25, 'mensual', NULL, NULL, 'cuotas', 1),
+      ('ap-honorario','Aporte Honorario',      0, 'mensual', NULL, NULL, 'cuotas', 1);
   `);
 }
 
