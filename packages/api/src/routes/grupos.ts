@@ -64,6 +64,18 @@ grupos.delete('/:id', (c) => {
 
   if (!existing) return c.json({ error: 'Grupo no encontrado' }, 404);
 
+  // Guard 409: grupo referenciado por una definición de aporte (join M:N,
+  // D30 — fix del orphan-FK: la columna legacy `aplica_grupo_id` no estaba
+  // guardada). Chequeo ANTES de los de membresía.
+  const enDefinicion = db
+    .select({ definitionId: schema.aportesDefinicionGrupos.definitionId })
+    .from(schema.aportesDefinicionGrupos)
+    .where(eq(schema.aportesDefinicionGrupos.grupoId, id))
+    .get();
+  if (enDefinicion) {
+    return c.json({ error: 'Cannot delete: group is referenced by an aporte definition' }, 409);
+  }
+
   // Guard 409: grupo referenciado como primario o en socio_grupos
   const primario = db
     .select({ id: schema.socios.id })

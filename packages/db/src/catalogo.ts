@@ -92,13 +92,13 @@ export type AporteDefinicionCatalogo = {
   inicio: string | null; // YYYY-MM-DD
   fin: string | null; // YYYY-MM-DD
   modalidadPago: string; // 'cuotas' | 'parciales' | 'pago_unico'
-  aplicaGrupoId: string | null; // null = global
   activo: number; // 0|1
 };
 
 // 4 definiciones de aporte por defecto. Ids estables compartidos por seed.ts y
 // la migración SQL (0005), para que el backfill de socio_aportes mapee a las
-// mismas filas. `ap-mensual` es la definición activa por defecto.
+// mismas filas. `ap-mensual` es la definición activa por defecto. Todas son
+// GLOBALES (`grupoIds: []` — sin filas en `aportes_definicion_grupos`, D23).
 export const APORTES_DEFINICION_SEED: AporteDefinicionCatalogo[] = [
   {
     id: 'ap-mensual',
@@ -108,7 +108,6 @@ export const APORTES_DEFINICION_SEED: AporteDefinicionCatalogo[] = [
     inicio: null,
     fin: null,
     modalidadPago: 'cuotas',
-    aplicaGrupoId: null,
     activo: 1,
   },
   {
@@ -119,7 +118,6 @@ export const APORTES_DEFINICION_SEED: AporteDefinicionCatalogo[] = [
     inicio: null,
     fin: null,
     modalidadPago: 'cuotas',
-    aplicaGrupoId: null,
     activo: 1,
   },
   {
@@ -130,7 +128,6 @@ export const APORTES_DEFINICION_SEED: AporteDefinicionCatalogo[] = [
     inicio: null,
     fin: null,
     modalidadPago: 'cuotas',
-    aplicaGrupoId: null,
     activo: 1,
   },
   {
@@ -141,7 +138,6 @@ export const APORTES_DEFINICION_SEED: AporteDefinicionCatalogo[] = [
     inicio: null,
     fin: null,
     modalidadPago: 'cuotas',
-    aplicaGrupoId: null,
     activo: 1,
   },
 ];

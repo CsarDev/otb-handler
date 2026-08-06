@@ -4,13 +4,14 @@ import type { Aporte } from '@otb/core';
 
 // Helpers de definición de aporte (modelo corregido D1–D11). El aporte ES la
 // definición dinámica (`aportes_definicion`); la aplicabilidad a un socio es
-// directa (`socio_aportes`) O por grupo (`aplica_grupo_id`) resuelta en
-// lectura/generación. NO hay override de monto/tipo: los `monto`/`tipo` de los
-// registros derivan de la definición (D2, D8).
+// directa (`socio_aportes`) O por grupo M:N (`aportes_definicion_grupos`,
+// D23) resuelta en lectura/generación. NO hay override de monto/tipo: los
+// `monto`/`tipo` de los registros derivan de la definición (D2, D8).
 
 /**
  * Lee una definición por su id (slug estable). Devuelve `undefined` si no
- * existe o si se pasa un id nulo/vacío.
+ * existe o si se pasa un id nulo/vacío. SIEMPRE devuelve la definición
+ * hidratada con `grupoIds` (invariante D25: nunca `undefined`).
  */
 export function aporteDefPorId(id: string | null | undefined): Aporte | undefined {
   if (!id) return undefined;
@@ -19,7 +20,7 @@ export function aporteDefPorId(id: string | null | undefined): Aporte | undefine
     .from(schema.aportesDefinicion)
     .where(eq(schema.aportesDefinicion.id, id))
     .get();
-  return def ? (def as unknown as Aporte) : undefined;
+  return def ? hidratarGrupoIds([def as unknown as Aporte])[0] : undefined;
 }
 
 /**
@@ -34,7 +35,7 @@ export function aporteDefActivoDefault(): Aporte | undefined {
     .where(eq(schema.aportesDefinicion.activo, 1))
     .orderBy(sql`rowid`)
     .get();
-  return def ? (def as unknown as Aporte) : undefined;
+  return def ? hidratarGrupoIds([def as unknown as Aporte])[0] : undefined;
 }
 
 function pad2(n: number): string {
@@ -76,18 +77,22 @@ export function mesesDefinicion(
 /**
  * Aplicabilidad de una definición a un socio (predicado puro, sin DB):
  * TRUE si la definición está entre los `aporteIds` directos del socio (asignación
- * explícita en `socio_aportes`) O si `def.aplicaGrupoId` coincide con el grupo
- * primario del socio o con alguno de sus grupos adicionales (aplicación dinámica
- * por grupo, D5). `grupos` son los id de los grupos adicionales del socio.
+ * explícita en `socio_aportes`) O si `def.grupoIds` intersecta el grupo primario
+ * del socio o sus grupos adicionales (aplicación dinámica por grupo M:N, D23/D25).
+ * `def.grupoIds` vacío = global → NUNCA "held" por grupo (solo por asignación directa).
+ * `grupos` son los id de los grupos adicionales del socio.
  */
 export function socioHoldsAporte(
   socio: { aporteIds: string[] | undefined; grupoPrimarioId: string | null },
-  def: { id: string; aplicaGrupoId: string | null },
+  def: { id: string; grupoIds: string[] },
   grupos: string[],
 ): boolean {
   if (socio.aporteIds?.includes(def.id)) return true;
-  if (def.aplicaGrupoId == null) return false;
-  return def.aplicaGrupoId === socio.grupoPrimarioId || grupos.includes(def.aplicaGrupoId);
+  if (def.grupoIds.length === 0) return false; // global → nunca "held" por grupo
+  const gruposDelSocio = new Set<string>();
+  if (socio.grupoPrimarioId) gruposDelSocio.add(socio.grupoPrimarioId);
+  for (const g of grupos) gruposDelSocio.add(g);
+  return def.grupoIds.some((g) => gruposDelSocio.has(g)); // intersección de sets
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -198,27 +203,72 @@ export function gruposAdicionalesPorSocio(ids: string[]): Map<string, string[]> 
 }
 
 /**
- * Definiciones ACTIVAS cuya `aplicaGrupoId` ∈ grupoIds (D20): lote único
- * `inArray`, sin N+1. Se usa en el guardado de socio (D16) para la mitad
- * group-scoped de la unión. Solo activas: una definición de grupo inactiva
- * deja de generar para miembros nuevos (los registros ya generados quedan).
+ * definition_id → grupoId[] (batch, sin N+1, D25). Lote único `inArray` sobre
+ * la join M:N `aportes_definicion_grupos`, ensamblado en memoria. Espejo de
+ * `gruposAdicionalesPorSocio`.
+ */
+export function grupoIdsPorDefinicion(ids: string[]): Map<string, string[]> {
+  const mapa = new Map<string, string[]>();
+  if (ids.length === 0) return mapa;
+  const filas = db
+    .select({
+      definitionId: schema.aportesDefinicionGrupos.definitionId,
+      grupoId: schema.aportesDefinicionGrupos.grupoId,
+    })
+    .from(schema.aportesDefinicionGrupos)
+    .where(inArray(schema.aportesDefinicionGrupos.definitionId, ids))
+    .orderBy(sql`rowid`) // orden de inserción (el orden enviado en POST/PUT) — D29
+    .all();
+  for (const f of filas) {
+    const arr = mapa.get(f.definitionId) ?? [];
+    arr.push(f.grupoId);
+    mapa.set(f.definitionId, arr);
+  }
+  return mapa;
+}
+
+/**
+ * Adjunta `grupoIds` (default `[]`) a definiciones — ÚNICA fuente de
+ * hidratación (D25). Invariante: todo `Aporte` devuelto por los paths de
+ * lectura/generación lleva `grupoIds` (nunca `undefined`): un `grupoIds ===
+ * undefined` tendría `length === 0` y la generación group-scoped dejaría de
+ * funcionar silenciosamente.
+ */
+function hidratarGrupoIds(defs: Aporte[]): Aporte[] {
+  const mapa = grupoIdsPorDefinicion(defs.map((d) => d.id));
+  return defs.map((d) => ({ ...d, grupoIds: mapa.get(d.id) ?? [] }));
+}
+
+/**
+ * Definiciones ACTIVAS cuya aplicación M:N (`aportes_definicion_grupos`)
+ * incluye alguno de los `grupoIds` (D20/D25): join a través de la tabla M:N,
+ * lote único, sin N+1. Dedup por id de definición (una definición listada bajo
+ * varios grupos pedidos aparece una vez). Solo activas: una definición de grupo
+ * inactiva deja de generar para miembros nuevos (los registros ya generados
+ * quedan). El resultado va HIDRATADO (invariante D25).
  */
 export function definicionesDeGrupos(grupoIds: string[]): Aporte[] {
   if (grupoIds.length === 0) return [];
   const filas = db
-    .select()
-    .from(schema.aportesDefinicion)
+    .select({ def: schema.aportesDefinicion })
+    .from(schema.aportesDefinicionGrupos)
+    .innerJoin(
+      schema.aportesDefinicion,
+      eq(schema.aportesDefinicionGrupos.definitionId, schema.aportesDefinicion.id),
+    )
     .where(
       and(
-        inArray(schema.aportesDefinicion.aplicaGrupoId, grupoIds),
+        inArray(schema.aportesDefinicionGrupos.grupoId, grupoIds),
         eq(schema.aportesDefinicion.activo, 1),
       ),
     )
     .all();
-  return filas as unknown as Aporte[];
+  const unicos = new Map<string, Aporte>();
+  for (const f of filas) unicos.set(f.def.id, f.def as unknown as Aporte);
+  return hidratarGrupoIds([...unicos.values()]);
 }
 
-/** Definiciones ACTIVAS por id (lote único) — mitad directa de la unión del socio-save (D16). */
+/** Definiciones ACTIVAS por id (lote único) — mitad directa de la unión del socio-save (D16). Hidratadas (D25). */
 export function definicionesPorIds(ids: string[]): Aporte[] {
   if (ids.length === 0) return [];
   const filas = db
@@ -226,7 +276,7 @@ export function definicionesPorIds(ids: string[]): Aporte[] {
     .from(schema.aportesDefinicion)
     .where(and(inArray(schema.aportesDefinicion.id, ids), eq(schema.aportesDefinicion.activo, 1)))
     .all();
-  return filas as unknown as Aporte[];
+  return hidratarGrupoIds(filas as unknown as Aporte[]);
 }
 
 /**

@@ -123,7 +123,7 @@ describe('Aportes — matriz cross-path del invariante de dedup (T4.2)', () => {
         inicio: `${gestion}-01-01`,
         fin: `${gestion}-12-31`,
         socioIds: [s2],
-        aplicaGrupoId: g1,
+        grupoIds: [g1],
       },
     });
     expect(status).toBe(201);
@@ -176,7 +176,7 @@ describe('Aportes — matriz cross-path del invariante de dedup (T4.2)', () => {
   it('"a nadie" crea 0 registros; asignado luego por el form de socio aparece exactamente una vez', async () => {
     const gestion = new Date().getFullYear();
 
-    // (1) Creación "a nadie" (sin socioIds ni aplicaGrupoId) → 0 registros.
+    // (1) Creación "a nadie" (sin socioIds ni grupoIds) → 0 registros.
     const { status, data } = await requestJson('/api/aportes-definicion', {
       method: 'POST',
       body: {
@@ -227,7 +227,7 @@ describe('Aportes — matriz cross-path del invariante de dedup (T4.2)', () => {
       recurrencia: 'mensual',
       inicio: `${gestion}-05-01`,
       fin: `${gestion}-06-30`,
-      aplicaGrupoId: g1,
+      grupoIds: [g1],
     });
 
     // (1) Ingreso al grupo (membresía adicional) → registros generados una vez (2 meses).

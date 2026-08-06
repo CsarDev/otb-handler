@@ -50,6 +50,7 @@ function gruposPorSocio(ids: string[]): Map<string, { id: string; nombre: string
     })
     .from(schema.socioGrupos)
     .where(inArray(schema.socioGrupos.socioId, ids))
+    .orderBy(sql`rowid`) // orden de inserción (el orden enviado en POST) — D29
     .all();
 
   const grupoIds = [...new Set(membresias.map((m) => m.grupoId))];
@@ -96,10 +97,14 @@ function aportesDirectosPorSocio(ids: string[]): Map<string, string[]> {
   return mapa;
 }
 
-// Aportes HEREDADOS por grupo, resueltos dinámicamente (D5): definiciones cuyo
-// `aplicaGrupoId` ∈ { grupoPrimarioId ∪ grupos adicionales } del socio, con el
-// nombre del grupo que las aplica (join a `grupos`). Batch para listas, sin N+1.
-// La dedup contra asignaciones directas se hace en `armarSocio`.
+// Aportes HEREDADOS por grupo, resueltos dinámicamente (D5/D29): definiciones
+// cuya aplicación M:N (`aportes_definicion_grupos`) incluye alguno de los
+// grupos del socio (primario o adicionales), con el nombre del grupo que las
+// aplica. DEF-DEDUP (R2/D29): una definición que aplica por VARIOS grupos del
+// socio aparece UNA sola vez, atribuida al PRIMER grupo en orden estable —
+// primario primero, luego adicionales por rowid de `socio_grupos`. 3 queries
+// batch (join + nombres de definición + nombres de grupo), sin N+1. La dedup
+// contra asignaciones directas se hace en `armarSocio`.
 function aportesInheritedPorSocio(
   filas: FilaSocio[],
   grupos: Map<string, { id: string; nombre: string }[]>,
@@ -107,42 +112,81 @@ function aportesInheritedPorSocio(
   const mapa = new Map<string, AporteInherited[]>();
   if (filas.length === 0) return mapa;
 
-  const grupoIds = new Set<string>();
+  // 1) Grupos de cada socio en ORDEN ESTABLE: [primario?] primero, luego
+  //    adicionales por rowid (`gruposPorSocio` ya ordena por rowid, D29).
+  const gruposDelSocio = new Map<string, string[]>();
+  const todosGrupos = new Set<string>();
   for (const f of filas) {
-    if (f.grupoPrimarioId) grupoIds.add(f.grupoPrimarioId);
-    for (const g of grupos.get(f.id) ?? []) grupoIds.add(g.id);
+    const ids: string[] = [];
+    if (f.grupoPrimarioId) {
+      ids.push(f.grupoPrimarioId);
+      todosGrupos.add(f.grupoPrimarioId);
+    }
+    for (const g of grupos.get(f.id) ?? []) {
+      ids.push(g.id);
+      todosGrupos.add(g.id);
+    }
+    gruposDelSocio.set(f.id, ids);
   }
-  if (grupoIds.size === 0) return mapa;
+  if (todosGrupos.size === 0) return mapa;
 
-  const defs = db
+  // 2) Batch sobre la join M:N: filas (definition_id, grupo_id) para TODOS los
+  //    grupos de todos los socios del lote (1 query, sin N+1).
+  const filasJoin = db
     .select({
-      id: schema.aportesDefinicion.id,
-      nombre: schema.aportesDefinicion.nombre,
-      grupoId: schema.aportesDefinicion.aplicaGrupoId,
-      grupoNombre: schema.grupos.nombre,
+      definitionId: schema.aportesDefinicionGrupos.definitionId,
+      grupoId: schema.aportesDefinicionGrupos.grupoId,
     })
-    .from(schema.aportesDefinicion)
-    .innerJoin(schema.grupos, eq(schema.aportesDefinicion.aplicaGrupoId, schema.grupos.id))
-    .where(inArray(schema.aportesDefinicion.aplicaGrupoId, [...grupoIds]))
+    .from(schema.aportesDefinicionGrupos)
+    .where(inArray(schema.aportesDefinicionGrupos.grupoId, [...todosGrupos]))
     .all();
+  if (filasJoin.length === 0) return mapa;
 
-  const defsPorGrupo = new Map<string, AporteInherited[]>();
-  for (const d of defs) {
-    if (!d.grupoId) continue;
-    const arr = defsPorGrupo.get(d.grupoId) ?? [];
-    arr.push({ id: d.id, nombre: d.nombre, grupoId: d.grupoId, grupoNombre: d.grupoNombre ?? '' });
-    defsPorGrupo.set(d.grupoId, arr);
+  // 3) Nombres de definiciones + nombres de grupo (2 queries batch más).
+  const defIds = [...new Set(filasJoin.map((r) => r.definitionId))];
+  const defsNombre = defIds.length
+    ? db
+        .select({ id: schema.aportesDefinicion.id, nombre: schema.aportesDefinicion.nombre })
+        .from(schema.aportesDefinicion)
+        .where(inArray(schema.aportesDefinicion.id, defIds))
+        .all()
+    : [];
+  const nombreDef = new Map(defsNombre.map((d) => [d.id, d.nombre]));
+
+  const grupoIdsJoin = [...new Set(filasJoin.map((r) => r.grupoId))];
+  const gruposNombre = grupoIdsJoin.length
+    ? db
+        .select({ id: schema.grupos.id, nombre: schema.grupos.nombre })
+        .from(schema.grupos)
+        .where(inArray(schema.grupos.id, grupoIdsJoin))
+        .all()
+    : [];
+  const nombreGrupo = new Map(gruposNombre.map((g) => [g.id, g.nombre]));
+
+  // 4) Filas de la join agrupadas por grupoId.
+  const defsPorGrupo = new Map<string, string[]>();
+  for (const r of filasJoin) {
+    const arr = defsPorGrupo.get(r.grupoId) ?? [];
+    arr.push(r.definitionId);
+    defsPorGrupo.set(r.grupoId, arr);
   }
 
+  // 5) Por socio: iterar los grupos en orden estable; la PRIMERA coincidencia
+  //    gana (dedup por id de definición — D29: un chip por definición).
   for (const f of filas) {
-    const grupoIdsDelSocio = new Set<string>();
-    if (f.grupoPrimarioId) grupoIdsDelSocio.add(f.grupoPrimarioId);
-    for (const g of grupos.get(f.id) ?? []) grupoIdsDelSocio.add(g.id);
-
-    // dedup por id de definición: una definición aplica por un único grupo
+    const orden = gruposDelSocio.get(f.id) ?? [];
     const set = new Map<string, AporteInherited>();
-    for (const gid of grupoIdsDelSocio) {
-      for (const d of defsPorGrupo.get(gid) ?? []) set.set(d.id, d);
+    for (const gid of orden) {
+      for (const defId of defsPorGrupo.get(gid) ?? []) {
+        if (!set.has(defId)) {
+          set.set(defId, {
+            id: defId,
+            nombre: nombreDef.get(defId) ?? '',
+            grupoId: gid,
+            grupoNombre: nombreGrupo.get(gid) ?? '',
+          });
+        }
+      }
     }
     mapa.set(f.id, [...set.values()]);
   }

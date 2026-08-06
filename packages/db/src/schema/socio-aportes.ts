@@ -4,8 +4,8 @@ import { aportesDefinicion } from './aportes-definicion';
 
 // Asignación many-to-many socio ↔ definición de aporte (mismo patrón que
 // `socio_grupos`). La fuente de aplicabilidad de una definición puede ser un
-// row directo aquí O su `aplica_grupo_id` (resuelto dinámicamente en lectura
-// y generación).
+// row directo aquí O su aplicación de grupo M:N (`aportes_definicion_grupos`,
+// resuelta dinámicamente en lectura y generación).
 export const socioAportes = sqliteTable(
   'socio_aportes',
   {

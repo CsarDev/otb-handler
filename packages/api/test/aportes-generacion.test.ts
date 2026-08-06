@@ -92,7 +92,7 @@ describe('Aportes — generación single definition-driven', () => {
       recurrencia: 'mensual',
       inicio: '2025-01-01',
       fin: '2025-02-28',
-      aplicaGrupoId: g1,
+      grupoIds: [g1],
     });
     const s1 = (await crearSocio({ grupoPrimarioId: g1, aporteIds: [] })).data.id;
 
