@@ -16,7 +16,10 @@ import type {
   TipoActividad,
   OTBConfig,
   BalanceReport,
+  Paginated,
   BulkAporteRequest,
+  BulkMultaRequest,
+  BulkMultaResponse,
   CrearAporteRequest,
   LibroDiarioEntry,
   ResumenSocioReport,
@@ -109,9 +112,14 @@ type AppState = {
   pagarAporte: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<AporteRegistro>;
 
   multas: Multa[];
+  multasTotal: number;
+  multasPage: number;
+  multasPageSize: number;
   multasLoading: boolean;
   multasError: string | null;
-  fetchMultas: (filters?: MultaFilters) => Promise<void>;
+  fetchMultas: (filters?: MultaFilters, page?: number) => Promise<void>;
+  setMultasPage: (page: number, filters?: MultaFilters) => Promise<void>;
+  createMultasBulk: (payload: BulkMultaRequest) => Promise<BulkMultaResponse>;
   createMulta: (data: Partial<Multa>) => Promise<Multa>;
   pagarMulta: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Multa>;
   anularMulta: (id: string, razon: string) => Promise<Multa>;
@@ -277,9 +285,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   multas: [],
+  multasTotal: 0,
+  multasPage: 1,
+  multasPageSize: 25,
   multasLoading: false,
   multasError: null,
-  fetchMultas: async (filters) => {
+  fetchMultas: async (filters, page) => {
     set({ multasLoading: true, multasError: null });
     try {
       const params = new URLSearchParams();
@@ -291,12 +302,39 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (filters?.gestion) params.set('gestion', filters.gestion);
       if (filters?.estadoId) params.set('estadoId', filters.estadoId);
       if (filters?.grupoId) params.set('grupoId', filters.grupoId);
+      // D38: SIEMPRE enviar page/pageSize (defaults del store 1/25, cap del API 100).
+      params.set('page', String(page ?? get().multasPage));
+      params.set('pageSize', String(get().multasPageSize));
       const qs = params.toString() ? `?${params}` : '';
-      const data = await request<Multa[]>(`/multas${qs}`);
-      set({ multas: data, multasLoading: false });
+      const data = await request<Paginated<Multa>>(`/multas${qs}`);
+      // D33: unpack del envelope — items→multas, total→multasTotal, echo de page/pageSize.
+      set({
+        multas: data.items,
+        multasTotal: data.total,
+        multasPage: data.page,
+        multasPageSize: data.pageSize,
+        multasLoading: false,
+      });
     } catch (e) {
       set({ multasError: (e as Error).message, multasLoading: false });
     }
+  },
+  setMultasPage: async (page, filters) => {
+    // D38: único punto de mutación de página — sirve TANTO al cambio de página
+    // (onPageChange) como al reset a página 1 ante un cambio de filtros.
+    set({ multasPage: page });
+    return get().fetchMultas(filters, page);
+  },
+  createMultasBulk: async (payload) => {
+    // D41: reemplaza el fetch crudo de la ruta; refresca la lista en página 1,
+    // sin filtros (paridad con el fetchMultas() post-creación de antes). El
+    // helper `request` lanza ApiError con el mensaje amigable del API.
+    const res = await request<BulkMultaResponse>('/multas/bulk', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    await get().fetchMultas(undefined, 1);
+    return res;
   },
   createMulta: async (data) => {
     const multa = await request<Multa>('/multas', { method: 'POST', body: JSON.stringify(data) });
