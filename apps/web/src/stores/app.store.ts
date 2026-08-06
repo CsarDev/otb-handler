@@ -105,9 +105,13 @@ type AppState = {
   bajaSocio: (id: string, motivo: string) => Promise<Socio>;
 
   aporteRegistros: AporteRegistro[];
+  aporteRegistrosTotal: number;
+  aporteRegistrosPage: number;
+  aporteRegistrosPageSize: number;
   aporteRegistrosLoading: boolean;
   aporteRegistrosError: string | null;
-  fetchAporteRegistros: (filters?: AporteFilters) => Promise<void>;
+  fetchAporteRegistros: (filters?: AporteFilters, page?: number) => Promise<void>;
+  setAporteRegistrosPage: (page: number, filters?: AporteFilters) => Promise<void>;
   createAporte: (data: CrearAporteRequest) => Promise<GeneracionResult>;
   pagarAporte: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<AporteRegistro>;
 
@@ -251,9 +255,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   aporteRegistros: [],
+  aporteRegistrosTotal: 0,
+  aporteRegistrosPage: 1,
+  aporteRegistrosPageSize: 25,
   aporteRegistrosLoading: false,
   aporteRegistrosError: null,
-  fetchAporteRegistros: async (filters) => {
+  fetchAporteRegistros: async (filters, page) => {
     set({ aporteRegistrosLoading: true, aporteRegistrosError: null });
     try {
       const params = new URLSearchParams();
@@ -266,12 +273,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (filters?.fechaHasta) params.set('fechaHasta', filters.fechaHasta);
       if (filters?.estadoId) params.set('estadoId', filters.estadoId);
       if (filters?.grupoId) params.set('grupoId', filters.grupoId);
+      // D38: SIEMPRE enviar page/pageSize (defaults del store 1/25, cap del API 100).
+      params.set('page', String(page ?? get().aporteRegistrosPage));
+      params.set('pageSize', String(get().aporteRegistrosPageSize));
       const qs = params.toString() ? `?${params}` : '';
-      const data = await request<AporteRegistro[]>(`/aportes${qs}`);
-      set({ aporteRegistros: data, aporteRegistrosLoading: false });
+      const data = await request<Paginated<AporteRegistro>>(`/aportes${qs}`);
+      // D33: unpack del envelope — items→aporteRegistros, total→aporteRegistrosTotal, echo de page/pageSize.
+      set({
+        aporteRegistros: data.items,
+        aporteRegistrosTotal: data.total,
+        aporteRegistrosPage: data.page,
+        aporteRegistrosPageSize: data.pageSize,
+        aporteRegistrosLoading: false,
+      });
     } catch (e) {
       set({ aporteRegistrosError: (e as Error).message, aporteRegistrosLoading: false });
     }
+  },
+  setAporteRegistrosPage: async (page, filters) => {
+    // D38: único punto de mutación de página — sirve TANTO al cambio de página
+    // (onPageChange) como al reset a página 1 ante un cambio de filtros.
+    set({ aporteRegistrosPage: page });
+    return get().fetchAporteRegistros(filters, page);
   },
   createAporte: async (data) => {
     // Generación simple definition-driven: { socioId, aporteId, gestion, mes? }
