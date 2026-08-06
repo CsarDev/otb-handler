@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 import { socioPermiteUI } from '../lib/permisos';
-import { Badge, MultiSelect } from '@otb/ui';
+import { Badge, MultiSelect, Pagination } from '@otb/ui';
 import type { Multa, Socio } from '@otb/core';
 
 const createMultaSchema = z
@@ -62,11 +62,26 @@ function SocioEstadoBadge({ multa, socioById }: { multa: Multa; socioById: Map<s
 }
 
 export default function MultasPage() {
-  const { multas, multasLoading, multasError, fetchMultas, pagarMulta, anularMulta, createMultasBulk } = useAppStore();
+  const { multas, multasTotal, multasPage, multasPageSize, multasLoading, multasError, pagarMulta, anularMulta, createMultasBulk, setMultasPage } = useAppStore();
   const { socios, fetchSocios, actividades, fetchActividades } = useAppStore();
   const { estadosSocio, accionesSocio, grupos, fetchConfig } = useAppStore();
   const [tab, setTab] = useState<'crear' | 'listar'>('listar');
   const [filters, setFilters] = useState({ socioId: '', estado: '', actividadId: '', fechaDesde: '', fechaHasta: '', gestion: '', estadoId: '', grupoId: '' });
+  // D38: filtros mapeados (undefined si vacíos) compartidos por el efecto de
+  // reset y por onPageChange del Pagination — mismo objeto en ambos caminos.
+  const hasListarFilters = Boolean(filters.socioId || filters.estado || filters.actividadId || filters.fechaDesde || filters.fechaHasta || filters.gestion || filters.estadoId || filters.grupoId);
+  const listarFilters = hasListarFilters
+    ? {
+        socioId: filters.socioId || undefined,
+        estado: filters.estado || undefined,
+        actividadId: filters.actividadId || undefined,
+        fechaDesde: filters.fechaDesde || undefined,
+        fechaHasta: filters.fechaHasta || undefined,
+        gestion: filters.gestion || undefined,
+        estadoId: filters.estadoId || undefined,
+        grupoId: filters.grupoId || undefined,
+      }
+    : undefined;
   const [createOpen, setCreateOpen] = useState(false);
   const [payingId, setPayingId] = useState<string | null>(null);
   const [voidingId, setVoidingId] = useState<string | null>(null);
@@ -92,18 +107,11 @@ export default function MultasPage() {
 
   useEffect(() => {
     if (tab !== 'listar') return;
-    const hasFilters = filters.socioId || filters.estado || filters.actividadId || filters.fechaDesde || filters.fechaHasta || filters.gestion || filters.estadoId || filters.grupoId;
-    fetchMultas(hasFilters ? {
-      socioId: filters.socioId || undefined,
-      estado: filters.estado || undefined,
-      actividadId: filters.actividadId || undefined,
-      fechaDesde: filters.fechaDesde || undefined,
-      fechaHasta: filters.fechaHasta || undefined,
-      gestion: filters.gestion || undefined,
-      estadoId: filters.estadoId || undefined,
-      grupoId: filters.grupoId || undefined,
-    } : undefined);
-  }, [tab, filters, fetchMultas]);
+    // D38: reset a página 1 ante cualquier cambio de filtros/tab. El dep NO
+    // incluye multasPage (loop guard): onPageChange pasa los filtros actuales y
+    // la identidad de `filters` no cambia → el efecto no se re-dispara.
+    setMultasPage(1, listarFilters);
+  }, [tab, filters, setMultasPage]);
 
   async function handleCreate(data: CreateMultaForm) {
     try {
@@ -267,7 +275,7 @@ export default function MultasPage() {
           {multasLoading && <p className="text-gray-500">Cargando...</p>}
           {multasError && <p className="text-red-600">Error: {multasError}</p>}
 
-          {!multasLoading && !multasError && multas.length === 0 && (
+          {!multasLoading && !multasError && multasTotal === 0 && (
             <div className="rounded-xl border bg-white p-12 text-center"><p className="text-gray-500">No hay multas registradas</p></div>
           )}
 
@@ -346,6 +354,16 @@ export default function MultasPage() {
               ))}
             </div>
           )}
+
+          {/* D37/D38: Pagination debajo de tabla y cards; total=0 → null (sin controles).
+              Si la página quedó fuera de rango (items vacíos, total > 0) se muestra para
+              poder volver, sin falsa empty-state. */}
+          <Pagination
+            page={multasPage}
+            total={multasTotal}
+            pageSize={multasPageSize}
+            onPageChange={(p) => setMultasPage(p, listarFilters)}
+          />
         </>
       )}
 
