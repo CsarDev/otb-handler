@@ -398,6 +398,97 @@ describe('Aportes Definición — PUT (actualización)', () => {
     expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [s1, def.id])).toHaveLength(12);
     expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [s2, def.id])).toHaveLength(12);
   });
+
+  it('T4.2 PUT con socioIds DECLARADOS reemplaza el set atómicamente y NUNCA borra registros (D27)', async () => {
+    const gestion = new Date().getFullYear();
+    const g1 = await crearGrupo('Grupo A');
+    const g2 = await crearGrupo('Grupo B');
+    const s1 = (await crearSocio({ aporteIds: [] })).data.id;
+    const s2 = (await crearSocio({ aporteIds: [] })).data.id;
+    const s3 = (await crearSocio({ aporteIds: [] })).data.id;
+    const m1 = (await crearSocio({ grupoPrimarioId: g1, aporteIds: [] })).data.id; // miembro de g1
+    const m2 = (await crearSocio({ grupoPrimarioId: g2, aporteIds: [] })).data.id; // miembro de g2
+
+    const def = await crearDefinicion({
+      nombre: 'Reemplazo Total',
+      monto: 10,
+      recurrencia: 'mensual',
+      inicio: `${gestion}-01-01`,
+      fin: `${gestion}-12-31`,
+      socioIds: [s1, s2],
+      grupoIds: [g1],
+    });
+
+    // Pre-condición (POST, D26): registros ya generados para los directos y m1.
+    expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [s1, def.id])).toHaveLength(12);
+    expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [s2, def.id])).toHaveLength(12);
+    expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [m1, def.id])).toHaveLength(12);
+
+    const { status, data } = await requestJson(`/api/aportes-definicion/${def.id}`, {
+      method: 'PUT',
+      body: { nombre: 'Reemplazo Total', monto: 10, socioIds: [s3], grupoIds: [g2] },
+    });
+
+    expect(status).toBe(200);
+
+    // socio_aportes contiene EXACTAMENTE (s3, id): las filas de s1/s2 se
+    // removieron en la MISMA transacción (replace-when-declared).
+    const asignaciones = filas('SELECT socio_id FROM socio_aportes WHERE aporte_id = ?', [def.id]);
+    expect(asignaciones.map((r) => r.socio_id)).toEqual([s3]);
+
+    // La join M:N contiene EXACTAMENTE (id, g2): la fila de g1 se removió.
+    const joins = filas('SELECT grupo_id FROM aportes_definicion_grupos WHERE definition_id = ?', [def.id]);
+    expect(joins.map((r) => r.grupo_id)).toEqual([g2]);
+
+    // La definición hidratada refleja el reemplazo.
+    expect(data.definiciones.find((d: any) => d.id === def.id)).toMatchObject({ socioIds: [s3], grupoIds: [g2] });
+
+    // Los registros YA generados para s1, s2 y m1 REMAIN (removals nunca borran).
+    expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [s1, def.id])).toHaveLength(12);
+    expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [s2, def.id])).toHaveLength(12);
+    expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [m1, def.id])).toHaveLength(12);
+
+    // Registros NUEVOS (missing-only, D13): s3 (12) + miembro de g2 (12) = 24.
+    expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [s3, def.id])).toHaveLength(12);
+    expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [m2, def.id])).toHaveLength(12);
+    expect(data.generados.count).toBe(24);
+  });
+
+  it('T4.2 PUT con grupoIds: [] deja la definición GLOBAL (D24/D25): sin join y nadie la hereda por grupo', async () => {
+    const gestion = new Date().getFullYear();
+    const g1 = await crearGrupo('Grupo A');
+    // s1 es miembro de g1 y recibió registros al asignar la definición al grupo.
+    const s1 = (await crearSocio({ grupoPrimarioId: g1, aporteIds: [] })).data.id;
+    const def = await crearDefinicion({
+      nombre: 'Fondo Global',
+      monto: 10,
+      recurrencia: 'mensual',
+      inicio: `${gestion}-01-01`,
+      fin: `${gestion}-12-31`,
+      grupoIds: [g1],
+    });
+    expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [s1, def.id])).toHaveLength(12);
+
+    // Quitar todos los chips: PUT declara grupoIds: [] → la definición pasa a global.
+    const { status, data } = await requestJson(`/api/aportes-definicion/${def.id}`, {
+      method: 'PUT',
+      body: { nombre: 'Fondo Global', monto: 10, grupoIds: [] },
+    });
+
+    expect(status).toBe(200);
+    const actualizada = data.definiciones.find((d: any) => d.id === def.id);
+    expect(actualizada.grupoIds).toEqual([]);
+    expect(filas('SELECT * FROM aportes_definicion_grupos WHERE definition_id = ?', [def.id])).toHaveLength(0);
+
+    // D25: socioHoldsAporte con def.grupoIds=[] → la definición global NUNCA es
+    // "held" por grupo: s1 (sin asignación directa) deja de heredarla.
+    const socio = (await requestJson(`/api/socios/${s1}`)).data;
+    expect(socio.aporteIds).toEqual([]);
+    expect(socio.aportesInherited.map((i: any) => i.id)).not.toContain(def.id);
+
+    // Los registros ya generados NO se borran (removals nunca borran, D13).
+    expect(filas('SELECT * FROM aportes WHERE socio_id = ? AND aporte_id = ?', [s1, def.id])).toHaveLength(12);
+  });
 });
 
 describe('Aportes Definición — DELETE (guard 409)', () => {
