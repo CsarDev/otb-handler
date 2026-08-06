@@ -165,7 +165,7 @@ type AppState = {
   removeGrupo: (id: string) => Promise<void>;
   fetchAportesDef: () => Promise<void>;
   addAporte: (data: AporteInput) => Promise<GeneracionResult>;
-  updateAporte: (id: string, data: Partial<AporteInput>) => Promise<void>;
+  updateAporte: (id: string, data: Partial<AporteInput>) => Promise<GeneracionResult>;
   removeAporte: (id: string) => Promise<void>;
   createAportesBulk: (payload: BulkAporteRequest) => Promise<GeneracionResult>;
   createAportesBulkAll: (payload: BulkAporteRequest) => Promise<GeneracionResult>;
@@ -512,8 +512,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     return res.generados;
   },
   updateAporte: async (id, data) => {
-    const definiciones = await request<Aporte[]>(`/aportes-definicion/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-    set({ aportes: definiciones });
+    // D27: PUT devuelve { definiciones: catálogo COMPLETO hidratado, generados } —
+    // se reemplaza la lista (patrón addAporte) y se devuelve `generados` para
+    // que el caller tostee el conteo (D22) también tras editar (D32).
+    const res = await request<CrearDefinicionResponse>(`/aportes-definicion/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    set({ aportes: res.definiciones });
+    return res.generados;
   },
   removeAporte: async (id) => {
     // DELETE guarda 409 cuando hay socios (socio_aportes) o registros (aportes.aporte_id)
