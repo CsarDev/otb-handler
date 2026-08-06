@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 import { socioPermiteUI } from '../lib/permisos';
-import { Badge, MultiSelect } from '@otb/ui';
+import { Badge, MultiSelect, Pagination } from '@otb/ui';
 import type { Aporte, AporteInput, AporteRegistro, Movimiento } from '@otb/core';
 
 const inputCls =
@@ -146,13 +146,30 @@ export default function AportesPage() {
   const {
     aportes, aportesLoading, aportesError,
     addAporte, updateAporte, removeAporte,
-    aporteRegistros, aporteRegistrosLoading, aporteRegistrosError, fetchAporteRegistros,
+    aporteRegistros, aporteRegistrosTotal, aporteRegistrosPage, aporteRegistrosPageSize,
+    aporteRegistrosLoading, aporteRegistrosError, fetchAporteRegistros, setAporteRegistrosPage,
     pagarAporte, anularAporte, fetchPagosAporte,
     socios, fetchSocios, estadosSocio, accionesSocio, grupos, fetchConfig,
   } = useAppStore();
 
   const [tab, setTab] = useState<'crear' | 'pagar'>('pagar');
   const [filters, setFilters] = useState({ socioId: '', mes: '', gestion: '', estado: '', tipo: '', fechaDesde: '', fechaHasta: '', estadoId: '', grupoId: '' });
+  // D38: filtros mapeados (undefined si vacíos) compartidos por el efecto de
+  // reset y por onPageChange del Pagination — mismo objeto en ambos caminos.
+  const hasPagarFilters = Boolean(filters.socioId || filters.mes || filters.gestion || filters.estado || filters.tipo || filters.fechaDesde || filters.fechaHasta || filters.estadoId || filters.grupoId);
+  const pagarFilters = hasPagarFilters
+    ? {
+        socioId: filters.socioId || undefined,
+        mes: filters.mes || undefined,
+        gestion: filters.gestion || undefined,
+        estado: filters.estado || undefined,
+        tipo: filters.tipo || undefined,
+        fechaDesde: filters.fechaDesde || undefined,
+        fechaHasta: filters.fechaHasta || undefined,
+        estadoId: filters.estadoId || undefined,
+        grupoId: filters.grupoId || undefined,
+      }
+    : undefined;
   const [payingId, setPayingId] = useState<string | null>(null);
   const [voidingId, setVoidingId] = useState<string | null>(null);
   const [voidReason, setVoidReason] = useState('');
@@ -194,19 +211,11 @@ export default function AportesPage() {
 
   useEffect(() => {
     if (tab !== 'pagar') return;
-    const hasFilters = filters.socioId || filters.mes || filters.gestion || filters.estado || filters.tipo || filters.fechaDesde || filters.fechaHasta || filters.estadoId || filters.grupoId;
-    fetchAporteRegistros(hasFilters ? {
-      socioId: filters.socioId || undefined,
-      mes: filters.mes || undefined,
-      gestion: filters.gestion || undefined,
-      estado: filters.estado || undefined,
-      tipo: filters.tipo || undefined,
-      fechaDesde: filters.fechaDesde || undefined,
-      fechaHasta: filters.fechaHasta || undefined,
-      estadoId: filters.estadoId || undefined,
-      grupoId: filters.grupoId || undefined,
-    } : undefined);
-  }, [tab, filters, fetchAporteRegistros]);
+    // D38: reset a página 1 ante cualquier cambio de filtros/tab. El dep NO
+    // incluye aporteRegistrosPage (loop guard): onPageChange pasa los filtros
+    // actuales y la identidad de `filters` no cambia → el efecto no se re-dispara.
+    setAporteRegistrosPage(1, pagarFilters);
+  }, [tab, filters, setAporteRegistrosPage]);
 
   const permitidos = socios.filter((s) =>
     socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'aportes'),
@@ -498,7 +507,7 @@ export default function AportesPage() {
           {aporteRegistrosLoading && <p className="text-gray-500">Cargando...</p>}
           {aporteRegistrosError && <p className="text-red-600">Error: {aporteRegistrosError}</p>}
 
-          {!aporteRegistrosLoading && !aporteRegistrosError && aporteRegistros.length === 0 && (
+          {!aporteRegistrosLoading && !aporteRegistrosError && aporteRegistrosTotal === 0 && (
             <div className="rounded-xl border bg-white p-12 text-center"><p className="text-gray-500">No hay cobros registrados</p></div>
           )}
 
@@ -583,6 +592,16 @@ export default function AportesPage() {
               ))}
             </div>
           )}
+
+          {/* D37/D38: Pagination debajo de tabla y cards; total=0 → null (sin controles).
+              Si la página quedó fuera de rango (items vacíos, total > 0) se muestra para
+              poder volver, sin falsa empty-state. */}
+          <Pagination
+            page={aporteRegistrosPage}
+            total={aporteRegistrosTotal}
+            pageSize={aporteRegistrosPageSize}
+            onPageChange={(p) => setAporteRegistrosPage(p, pagarFilters)}
+          />
         </>
       )}
 
