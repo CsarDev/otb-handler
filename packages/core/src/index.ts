@@ -207,6 +207,14 @@ export type Asistencia = {
   fechaReg: string;
 };
 
+/** Envelope paginado compartido (D33) — GET /api/multas y GET /api/aportes. */
+export type Paginated<T> = {
+  items: T[];
+  total: number; // COUNT de TODAS las filas que matchean los filtros (antes de paginar)
+  page: number; // echo del page efectivo
+  pageSize: number; // echo del pageSize efectivo (clamped)
+};
+
 export type Multa = {
   id: string;
   socioId: string;
@@ -275,12 +283,16 @@ export type PagoParcialRequest = {
 };
 
 export type BulkMultaRequest = {
-  socioIds: string[];
+  socioIds?: string[]; // opcional — requerido SOLO si grupoIds ausente/vacío (D36)
+  grupoIds?: string[]; // NUEVO — opcional; [] = sin aporte de grupos (D36)
   concepto: string;
   monto: number;
   actividadId?: string;
   fecha?: string;
 };
+
+/** Respuesta 201 de POST /api/multas/bulk (D36) — shape SIN cambios. */
+export type BulkMultaResponse = { count: number; items: Multa[] };
 
 /** Definition-driven (D8): NO monto / NO tipo override (D9). */
 export type BulkAporteRequest = {
