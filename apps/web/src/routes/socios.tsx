@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore, selectAportesActivos } from '../stores/app.store';
-import { Badge } from '@otb/ui';
+import { Badge, MultiSelect } from '@otb/ui';
 import type { Socio, Grupo, Aporte } from '@otb/core';
 
 const socioSchema = z.object({
@@ -217,18 +217,6 @@ export default function SociosPage() {
         current.filter((g) => g !== id),
       );
     }
-  }
-
-  function toggleAdicional(id: string) {
-    const current = form.getValues('grupoAdicionalIds');
-    const next = current.includes(id) ? current.filter((g) => g !== id) : [...current, id];
-    form.setValue('grupoAdicionalIds', next);
-  }
-
-  function toggleAporte(id: string) {
-    const current = form.getValues('aporteIds');
-    const next = current.includes(id) ? current.filter((a) => a !== id) : [...current, id];
-    form.setValue('aporteIds', next);
   }
 
   async function handleBaja() {
@@ -484,29 +472,14 @@ export default function SociosPage() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className={labelCls}>Aportes asignados</label>
-                  <div className="flex min-h-10 flex-wrap gap-2 rounded-lg border border-gray-300 p-2">
-                    {aportesActivos.length === 0 && (
-                      <span className="text-xs text-gray-400">No hay aportes activos configurados</span>
-                    )}
-                    {aportesActivos.map((a) => {
-                      const selected = aporteIds.includes(a.id);
-                      return (
-                        <button
-                          key={a.id}
-                          type="button"
-                          onClick={() => toggleAporte(a.id)}
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
-                            selected
-                              ? 'bg-blue-600 text-white'
-                              : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-                          }`}
-                        >
-                          {a.nombre}
-                          {selected && <span aria-hidden>×</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <MultiSelect
+                    options={aportesActivos.map((a) => ({ value: a.id, label: a.nombre }))}
+                    selected={aporteIds}
+                    onChange={(values) => form.setValue('aporteIds', values)}
+                    placeholder="Buscar aporte..."
+                    searchPlaceholder="Buscar por nombre"
+                    emptyLabel="No hay aportes activos configurados"
+                  />
                   <p className="mt-1 text-xs text-gray-400">
                     {aporteIds.length} aporte(s) asignado(s)
                   </p>
@@ -537,31 +510,15 @@ export default function SociosPage() {
                 </div>
                 <div>
                   <label className={labelCls}>Grupos Adicionales</label>
-                  <div className="flex min-h-10 flex-wrap gap-2 rounded-lg border border-gray-300 p-2">
-                    {grupos.length === 0 && (
-                      <span className="text-xs text-gray-400">No hay grupos configurados</span>
-                    )}
-                    {grupos
-                      .filter((g) => g.id !== form.watch('grupoPrimarioId'))
-                      .map((g) => {
-                        const selected = adicionalIds.includes(g.id);
-                        return (
-                          <button
-                            key={g.id}
-                            type="button"
-                            onClick={() => toggleAdicional(g.id)}
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
-                              selected
-                                ? 'bg-blue-600 text-white'
-                                : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-                            }`}
-                          >
-                            {g.nombre}
-                            {selected && <span aria-hidden>×</span>}
-                          </button>
-                        );
-                      })}
-                  </div>
+                  <MultiSelect
+                    options={grupos.map((g) => ({ value: g.id, label: g.nombre }))}
+                    selected={adicionalIds}
+                    onChange={(values) => form.setValue('grupoAdicionalIds', values)}
+                    excludeValues={form.watch('grupoPrimarioId') ? [form.watch('grupoPrimarioId') as string] : []}
+                    placeholder="Buscar grupo..."
+                    searchPlaceholder="Buscar por nombre"
+                    emptyLabel="No hay grupos configurados"
+                  />
                 </div>
               </div>
               <div className="flex justify-end gap-3 pt-2">
