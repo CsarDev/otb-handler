@@ -211,3 +211,100 @@ describe('Aportes — generación single definition-driven', () => {
     expect(filasRegistros).toMatchObject({ n: 3 });
   });
 });
+
+// Phase 6 / multiselect-paginacion-listas — GET /api/aportes envelope paginado
+// (pagination spec, D33/D34): { items, total, page, pageSize } SIEMPRE, ORDER BY
+// gestion DESC, mes DESC, id DESC, clamps/fallbacks, filtros ANTES de paginar.
+describe('GET /api/aportes — paginación', () => {
+  const year = new Date().getFullYear();
+
+  /** 5 socios × 12 mensual (ap-mensual global sin ventana) = 60 registros de la gestión actual. */
+  async function sembrar5Socios(): Promise<void> {
+    for (let i = 0; i < 5; i++) {
+      const creado = await crearSocio({ nombre: `Pago${i}`, apellidoPaterno: 'Test', aporteIds: [IDS.apMensual] });
+      expect(creado.status).toBe(201);
+    }
+  }
+
+  it('escenario default: 5 socios × 12 → { items: [25], total: 60, page: 1, pageSize: 25 }', async () => {
+    await sembrar5Socios();
+
+    const { status, data } = await requestJson('/api/aportes');
+
+    expect(status).toBe(200);
+    expect(data.items).toHaveLength(25);
+    expect(data.total).toBe(60);
+    expect(data.page).toBe(1);
+    expect(data.pageSize).toBe(25);
+  });
+
+  it('orden determinista: gestion DESC, mes DESC, id DESC (mes 12 primero, id DESC dentro del mes)', async () => {
+    await sembrar5Socios();
+
+    const { data } = await requestJson('/api/aportes');
+    const items = data.items as any[];
+
+    expect(items[0].mes).toBe(12);
+    const meses = items.map((i) => i.mes);
+    for (let i = 1; i < meses.length; i++) expect(meses[i]).toBeLessThanOrEqual(meses[i - 1]);
+
+    // Mes 12: 5 socios → ordenados id DESC dentro del mismo (gestion, mes).
+    const idsMes12 = items.filter((i) => i.mes === 12).map((i) => i.id);
+    expect(idsMes12).toHaveLength(5);
+    expect(idsMes12).toEqual([...idsMes12].sort().reverse());
+  });
+
+  it('pageSize=500 → clamp a 100 (echo 100, todos los items porque 60 < 100)', async () => {
+    await sembrar5Socios();
+
+    const { status, data } = await requestJson('/api/aportes?pageSize=500');
+
+    expect(status).toBe(200);
+    expect(data.pageSize).toBe(100);
+    expect(data.total).toBe(60);
+    expect(data.items).toHaveLength(60);
+  });
+
+  it('page=abc&pageSize=-5 → fallback a defaults page 1 / pageSize 25', async () => {
+    await sembrar5Socios();
+
+    const { status, data } = await requestJson('/api/aportes?page=abc&pageSize=-5');
+
+    expect(status).toBe(200);
+    expect(data.page).toBe(1);
+    expect(data.pageSize).toBe(25);
+  });
+
+  it('?mes=5 → total 5 (filtro antes de paginar, total filtrado)', async () => {
+    await sembrar5Socios();
+
+    const { status, data } = await requestJson('/api/aportes?mes=5');
+
+    expect(status).toBe(200);
+    expect(data.total).toBe(5);
+    expect(data.items).toHaveLength(5);
+    expect(data.items.every((i: any) => i.mes === 5)).toBe(true);
+  });
+
+  it('?gestion=<year>&mes=12 combinados → total 5', async () => {
+    await sembrar5Socios();
+
+    const { status, data } = await requestJson(`/api/aportes?gestion=${year}&mes=12`);
+
+    expect(status).toBe(200);
+    expect(data.total).toBe(5);
+    expect(data.items).toHaveLength(5);
+    expect(data.items.every((i: any) => i.gestion === year && i.mes === 12)).toBe(true);
+  });
+
+  it('page=99 fuera de rango → { items: [], total: 60, page: 99 }', async () => {
+    await sembrar5Socios();
+
+    const { status, data } = await requestJson('/api/aportes?page=99');
+
+    expect(status).toBe(200);
+    expect(data.items).toEqual([]);
+    expect(data.total).toBe(60);
+    expect(data.page).toBe(99);
+  });
+});

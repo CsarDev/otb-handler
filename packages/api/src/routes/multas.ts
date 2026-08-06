@@ -1,12 +1,16 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and, getTableColumns, lte, gte, sql, or, inArray } from 'drizzle-orm';
+import { eq, and, getTableColumns, lte, gte, sql, or, inArray, desc } from 'drizzle-orm';
 import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
+import { sociosPorGrupos } from '../lib/aportes';
+import { parsePaginacion } from '../lib/paginacion';
 
 const multas = new Hono();
 
 multas.get('/', (c) => {
-  const { socioId, estado, actividadId, fechaDesde, fechaHasta, gestion, estadoId, grupoId } = c.req.query();
+  const { socioId, estado, actividadId, fechaDesde, fechaHasta, gestion, estadoId, grupoId, page, pageSize } =
+    c.req.query();
+  const { page: p, pageSize: ps } = parsePaginacion({ page, pageSize });
   const filters: any[] = [];
 
   if (socioId) filters.push(eq(schema.multas.socioId, socioId));
@@ -24,7 +28,12 @@ multas.get('/', (c) => {
     filters.push(or(eq(schema.socios.grupoPrimarioId, grupoId), inArray(schema.socios.id, subquery)));
   }
 
-  const query = db
+  // Un solo WHERE builder compartido por COUNT e items (D33): `.where(undefined)`
+  // es no-op en drizzle, y el COUNT debe espejar el MISMO FROM + LEFT JOIN porque
+  // estadoId/grupoId filtran sobre schema.socios.
+  const where = filters.length ? and(...filters) : undefined;
+
+  const baseQuery = db
     .select({
       ...getTableColumns(schema.multas),
       socioNombre: schema.socios.nombre,
@@ -33,31 +42,68 @@ multas.get('/', (c) => {
     .from(schema.multas)
     .leftJoin(schema.socios, eq(schema.multas.socioId, schema.socios.id));
 
-  return c.json(
-    filters.length ? query.where(and(...filters)).all() : query.all(),
-  );
+  const total = db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.multas)
+    .leftJoin(schema.socios, eq(schema.multas.socioId, schema.socios.id))
+    .where(where)
+    .get();
+
+  const items = baseQuery
+    .where(where)
+    .orderBy(desc(schema.multas.fechaGen), desc(schema.multas.id)) // D34: (recencia, PK) = orden total
+    .limit(ps)
+    .offset((p - 1) * ps)
+    .all();
+
+  return c.json({ items, total: Number(total?.n ?? 0), page: p, pageSize: ps });
 });
 
 multas.post('/bulk', async (c) => {
   const body = await c.req.json();
 
-  if (!body.socioIds?.length || !body.concepto || !body.monto) {
+  // D36 (orden fijo, TODO antes de insertar):
+  // 1) Requeridos: socioIds (no-vacío) O grupoIds (no-vacío) + concepto + monto
+  //    (mensaje SIN cambios; grupoIds ausente/vacío mantiene socioIds requerido).
+  if ((!body.socioIds?.length && !body.grupoIds?.length) || !body.concepto || !body.monto) {
     return c.json({ error: 'socioIds (array), concepto, and monto are required' }, 400);
+  }
+  // 2) Shape: cuando está presente, grupoIds DEBE ser un array.
+  if (body.grupoIds !== undefined && !Array.isArray(body.grupoIds)) {
+    return c.json({ error: 'grupoIds must be an array' }, 400);
+  }
+  const grupoIds: string[] = body.grupoIds ?? [];
+  // 3) Existencia: cada id DEBE existir en `grupos` (batch, sin N+1, D18).
+  if (grupoIds.length > 0) {
+    const encontrados = new Set(
+      db
+        .select({ id: schema.grupos.id })
+        .from(schema.grupos)
+        .where(inArray(schema.grupos.id, grupoIds))
+        .all()
+        .map((r) => r.id),
+    );
+    if (grupoIds.some((id) => !encontrados.has(id))) {
+      return c.json({ error: 'grupoIds contains an invalid group' }, 400);
+    }
   }
 
   const monto = Number(body.monto);
   const fechaGen = body.fecha ?? new Date().toISOString().split('T')[0];
-  const socioIds: string[] = body.socioIds;
+  // 4) Set objetivo: unión DEDUPED de los socioIds directos y los miembros
+  //    ACTUALES de todos los grupos (D35) — el Set da O(1) de dedup.
+  const targetIds = [...new Set([...(body.socioIds ?? []), ...sociosPorGrupos(grupoIds)])];
 
   // Enforcement: excluir socios cuyo estado no permite 'multas'
   const permisos = cargarPermisosPorEstado();
   const socios = db
     .select({ id: schema.socios.id, estadoId: schema.socios.estadoId })
     .from(schema.socios)
-    .where(inArray(schema.socios.id, socioIds))
+    .where(inArray(schema.socios.id, targetIds))
     .all();
   const permitidos = socios.filter((s) => permite(permisos, s.estadoId, 'multas')).map((s) => s.id);
 
+  // 5) Check REUTILIZADO verbatim (D36): target vacío / todos excluidos → 400 existente.
   if (permitidos.length === 0) {
     return c.json({ error: 'Ningún socio puede participar en esta acción en su estado actual' }, 400);
   }

@@ -203,6 +203,35 @@ export function gruposAdicionalesPorSocio(ids: string[]): Map<string, string[]> 
 }
 
 /**
+ * Miembros ACTUALES de los grupos dados (D35): unión DEDUPADA de los socios con
+ * `grupoPrimarioId ∈ grupoIds` O membresía en `socio_grupos` con `grupoId ∈
+ * grupoIds`. 2 queries batch (socios primarios + join de adicionales), sin N+1.
+ * Semántica POINT-IN-TIME: se resuelve en el momento de la llamada (un socio
+ * que ingresa al grupo DESPUÉS no es retrocargado — el call site materializa
+ * al crear). Inverso de `gruposAdicionalesPorSocio`.
+ */
+export function sociosPorGrupos(grupoIds: string[]): Set<string> {
+  const ids = new Set<string>();
+  if (grupoIds.length === 0) return ids;
+
+  const primarios = db
+    .select({ id: schema.socios.id })
+    .from(schema.socios)
+    .where(inArray(schema.socios.grupoPrimarioId, grupoIds))
+    .all();
+  for (const p of primarios) ids.add(p.id);
+
+  const adicionales = db
+    .select({ socioId: schema.socioGrupos.socioId })
+    .from(schema.socioGrupos)
+    .where(inArray(schema.socioGrupos.grupoId, grupoIds))
+    .all();
+  for (const m of adicionales) ids.add(m.socioId);
+
+  return ids;
+}
+
+/**
  * definition_id → grupoId[] (batch, sin N+1, D25). Lote único `inArray` sobre
  * la join M:N `aportes_definicion_grupos`, ensamblado en memoria. Espejo de
  * `gruposAdicionalesPorSocio`.

@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and, getTableColumns, lte, gte, or, inArray } from 'drizzle-orm';
+import { eq, and, getTableColumns, lte, gte, or, inArray, desc, sql } from 'drizzle-orm';
 import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
+import { parsePaginacion } from '../lib/paginacion';
 import {
   aporteDefPorId,
   mesesDefinicion,
@@ -29,7 +30,9 @@ function rechazarOverride(body: Record<string, unknown>): { error: string; statu
 }
 
 aportes.get('/', (c) => {
-  const { socioId, mes, gestion, estado, tipo, fechaDesde, fechaHasta, estadoId, grupoId } = c.req.query();
+  const { socioId, mes, gestion, estado, tipo, fechaDesde, fechaHasta, estadoId, grupoId, page, pageSize } =
+    c.req.query();
+  const { page: p, pageSize: ps } = parsePaginacion({ page, pageSize });
   const filters: any[] = [];
 
   if (socioId) filters.push(eq(schema.aportes.socioId, socioId));
@@ -48,7 +51,12 @@ aportes.get('/', (c) => {
     filters.push(or(eq(schema.socios.grupoPrimarioId, grupoId), inArray(schema.socios.id, subquery)));
   }
 
-  const query = db
+  // Un solo WHERE builder compartido por COUNT e items (D33, patrón multas):
+  // el COUNT espeja el MISMO FROM + LEFT JOIN porque estadoId/grupoId filtran
+  // sobre schema.socios.
+  const where = filters.length ? and(...filters) : undefined;
+
+  const baseQuery = db
     .select({
       ...getTableColumns(schema.aportes),
       socioNombre: schema.socios.nombre,
@@ -57,9 +65,23 @@ aportes.get('/', (c) => {
     .from(schema.aportes)
     .leftJoin(schema.socios, eq(schema.aportes.socioId, schema.socios.id));
 
-  return c.json(
-    filters.length ? query.where(and(...filters)).all() : query.all(),
-  );
+  const total = db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.aportes)
+    .leftJoin(schema.socios, eq(schema.aportes.socioId, schema.socios.id))
+    .where(where)
+    .get();
+
+  // D34: (gestion, mes) NULLs sort last en DESC (determinista); id PK = tiebreak
+  // → orden total estricto, sin duplicados/gaps entre páginas.
+  const items = baseQuery
+    .where(where)
+    .orderBy(desc(schema.aportes.gestion), desc(schema.aportes.mes), desc(schema.aportes.id))
+    .limit(ps)
+    .offset((p - 1) * ps)
+    .all();
+
+  return c.json({ items, total: Number(total?.n ?? 0), page: p, pageSize: ps });
 });
 
 aportes.post('/bulk', async (c) => {
