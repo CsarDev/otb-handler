@@ -36,7 +36,7 @@ export type Aporte = {
   inicio: string | null; // YYYY-MM-DD
   fin: string | null; // YYYY-MM-DD; fin >= inicio cuando ambos están seteados
   modalidadPago: ModalidadPago;
-  aplicaGrupoId: string | null; // null = global
+  grupoIds: string[]; // M:N vía `aportes_definicion_grupos`; [] = global (antes aplicaGrupoId: string | null)
   activo: number; // 0|1
 };
 
@@ -47,7 +47,7 @@ export type AporteInput = {
   inicio?: string | null;
   fin?: string | null;
   modalidadPago?: ModalidadPago; // default 'cuotas' (D4)
-  aplicaGrupoId?: string | null; // group-scoped: current members generate at assignment
+  grupoIds?: string[]; // ausente/[] = global; cada id DEBE existir (400 si no) — antes aplicaGrupoId?
   activo?: number; // default 1
   socioIds?: string[]; // asignación directa (multiselect); cada id debe existir (D18)
 };
