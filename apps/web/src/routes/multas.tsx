@@ -4,15 +4,27 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
 import { socioPermiteUI } from '../lib/permisos';
-import { Badge } from '@otb/ui';
-import type { Multa } from '@otb/core';
+import { Badge, MultiSelect } from '@otb/ui';
+import type { Multa, Socio } from '@otb/core';
 
-const createMultaSchema = z.object({
-  socioIds: z.array(z.string()).min(1, 'Seleccione al menos un socio'),
-  concepto: z.string().min(1, 'Concepto requerido'),
-  monto: z.coerce.number().min(1, 'Monto requerido'),
-  actividadId: z.string().nullish().default(''),
-});
+const createMultaSchema = z
+  .object({
+    // D41: socioIds ya no es obligatorio SOLO — se exige al menos un socio O un grupo.
+    socioIds: z.array(z.string()),
+    concepto: z.string().min(1, 'Concepto requerido'),
+    monto: z.coerce.number().min(1, 'Monto requerido'),
+    actividadId: z.string().nullish().default(''),
+    grupoIds: z.array(z.string()).default([]),
+  })
+  .superRefine((data, ctx) => {
+    if (data.socioIds.length === 0 && data.grupoIds.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Seleccione al menos un socio o grupo',
+        path: ['socioIds'],
+      });
+    }
+  });
 
 const pagarSchema = z.object({
   monto: z.coerce.number().min(0.01, 'Monto requerido'),
@@ -22,6 +34,21 @@ const pagarSchema = z.object({
 
 type CreateMultaForm = z.infer<typeof createMultaSchema>;
 type PagarForm = z.infer<typeof pagarSchema>;
+
+/** Unión deduplicada (cliente, best-effort) de los socios objetivo (D41): miembros
+ *  ACTUALES de los grupos seleccionados (primario O adicional) ∪ socios directos.
+ *  Hint display-only — el servidor re-resuelve autoritativamente vía sociosPorGrupos (D35). */
+function calcularSociosObjetivo(socios: Socio[], selectedSocioIds: string[], selectedGrupoIds: string[]): number {
+  const ids = new Set<string>(selectedSocioIds);
+  for (const gid of selectedGrupoIds) {
+    for (const s of socios) {
+      if (s.grupoPrimarioId === gid || s.grupos.some((g) => g.id === gid)) {
+        ids.add(s.id);
+      }
+    }
+  }
+  return ids.size;
+}
 
 /** Badge de estado del socio con color del catálogo (hex inline). */
 function SocioEstadoBadge({ multa, socioById }: { multa: Multa; socioById: Map<string, { estadoColor: string | null; estadoNombre: string | null }> }) {
@@ -35,7 +62,7 @@ function SocioEstadoBadge({ multa, socioById }: { multa: Multa; socioById: Map<s
 }
 
 export default function MultasPage() {
-  const { multas, multasLoading, multasError, fetchMultas, pagarMulta, anularMulta } = useAppStore();
+  const { multas, multasLoading, multasError, fetchMultas, pagarMulta, anularMulta, createMultasBulk } = useAppStore();
   const { socios, fetchSocios, actividades, fetchActividades } = useAppStore();
   const { estadosSocio, accionesSocio, grupos, fetchConfig } = useAppStore();
   const [tab, setTab] = useState<'crear' | 'listar'>('listar');
@@ -44,10 +71,12 @@ export default function MultasPage() {
   const [payingId, setPayingId] = useState<string | null>(null);
   const [voidingId, setVoidingId] = useState<string | null>(null);
   const [voidReason, setVoidReason] = useState('');
+  // D41: selección de grupos del MultiSelect (los socios viven en el form).
+  const [selectedGrupoIds, setSelectedGrupoIds] = useState<string[]>([]);
 
   const createForm = useForm<CreateMultaForm>({
     resolver: zodResolver(createMultaSchema) as any,
-    defaultValues: { socioIds: [], concepto: '', monto: 0, actividadId: '' },
+    defaultValues: { socioIds: [], concepto: '', monto: 0, actividadId: '', grupoIds: [] },
   });
 
   const payForm = useForm<PagarForm>({
@@ -78,26 +107,20 @@ export default function MultasPage() {
 
   async function handleCreate(data: CreateMultaForm) {
     try {
-      const res = await fetch('/api/multas/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          socioIds: data.socioIds,
-          concepto: data.concepto,
-          monto: data.monto,
-          actividadId: data.actividadId || undefined,
-        }),
+      // D41: la acción del store reemplaza el fetch crudo de /multas/bulk;
+      // refresca la lista en página 1 y propaga el mensaje amigable del API.
+      await createMultasBulk({
+        socioIds: data.socioIds,
+        grupoIds: data.grupoIds,
+        concepto: data.concepto,
+        monto: data.monto,
+        actividadId: data.actividadId || undefined,
       });
-      if (!res.ok) {
-        const err = await res.json();
-        alert(err.error ?? 'Error al crear multas');
-        return;
-      }
-      await fetchMultas();
       setCreateOpen(false);
       createForm.reset();
-    } catch {
-      alert('Error al crear multas');
+      setSelectedGrupoIds([]);
+    } catch (e) {
+      alert((e as Error).message);
     }
   }
 
@@ -115,19 +138,12 @@ export default function MultasPage() {
     setVoidReason('');
   }
 
-  function toggleSocio(id: string) {
-    const current = createForm.getValues('socioIds');
-    if (current.includes(id)) {
-      createForm.setValue('socioIds', current.filter((s) => s !== id), { shouldValidate: true });
-    } else {
-      createForm.setValue('socioIds', [...current, id], { shouldValidate: true });
-    }
-  }
-
   const permitidos = socios.filter((s) =>
     socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'multas'),
   );
   const socioById = new Map(socios.map((s) => [s.id, s]));
+  const socioIdsWatch = createForm.watch('socioIds') as string[];
+  const sociosObjetivo = calcularSociosObjetivo(socios, socioIdsWatch, selectedGrupoIds);
 
   const tabs = [
     { key: 'listar' as const, label: 'Listar Multas' },
@@ -161,19 +177,31 @@ export default function MultasPage() {
           <form onSubmit={createForm.handleSubmit(handleCreate)} className="space-y-4">
             <div>
               <label className="mb-2 block text-xs font-medium text-gray-600">Socios (solo con permiso de "multas")</label>
-              <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 p-2">
-                {permitidos.map((s) => {
-                  const checked = createForm.watch('socioIds').includes(s.id);
-                  return (
-                    <label key={s.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
-                      <input type="checkbox" checked={checked} onChange={() => toggleSocio(s.id)} className="rounded border-gray-300" />
-                      {s.nombre} {s.apellidoPaterno}
-                    </label>
-                  );
-                })}
-                {permitidos.length === 0 && <p className="px-2 py-1 text-sm text-gray-400">Ningún socio tiene permiso de "multas".</p>}
-              </div>
+              <MultiSelect
+                options={permitidos.map((s) => ({ value: s.id, label: `${s.nombre} ${s.apellidoPaterno}` }))}
+                selected={socioIdsWatch}
+                onChange={(values) => createForm.setValue('socioIds', values, { shouldValidate: true })}
+                placeholder="Buscar socio..."
+                searchPlaceholder="Buscar por nombre o apellido"
+                emptyLabel={permitidos.length === 0 ? 'Ningún socio tiene permiso de "multas".' : 'Sin coincidencias'}
+              />
               {createForm.formState.errors.socioIds && <p className="text-xs text-red-500">{createForm.formState.errors.socioIds.message}</p>}
+            </div>
+            <div>
+              <label className="mb-2 block text-xs font-medium text-gray-600">Grupos</label>
+              <MultiSelect
+                options={grupos.map((g) => ({ value: g.id, label: g.nombre }))}
+                selected={selectedGrupoIds}
+                onChange={setSelectedGrupoIds}
+                placeholder="Buscar grupo..."
+                searchPlaceholder="Buscar por nombre"
+                emptyLabel="Sin coincidencias"
+              />
+              {selectedGrupoIds.length > 0 && (
+                <p className="mt-1 text-xs text-gray-400">
+                  Se aplicará a todos los socios del grupo al momento de la creación
+                </p>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">Concepto</label>
@@ -198,7 +226,7 @@ export default function MultasPage() {
             </div>
             <div className="flex justify-end gap-3 pt-2">
               <button type="submit" className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700">
-                Crear Multas ({createForm.watch('socioIds').length} socios)
+                Crear Multas ({sociosObjetivo} socios)
               </button>
             </div>
           </form>
