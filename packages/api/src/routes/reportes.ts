@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and, gte, lte, sql, getTableColumns, or, inArray } from 'drizzle-orm';
+import { eq, and, gte, lte, sql, getTableColumns, or, inArray, asc, desc } from 'drizzle-orm';
 import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
+import { parsePaginacion } from '../lib/paginacion';
 
 const reportes = new Hono();
 
@@ -81,6 +82,7 @@ reportes.get('/balance', (c) => {
 });
 
 reportes.get('/libro-diario', (c) => {
+  const { page, pageSize } = parsePaginacion(c.req.query());
   const gestion = c.req.query('gestion');
   const mes = c.req.query('mes');
   const tipo = c.req.query('tipo');
@@ -111,7 +113,19 @@ reportes.get('/libro-diario', (c) => {
     filters.push(or(eq(schema.socios.grupoPrimarioId, grupoId), inArray(schema.socios.id, subquery)));
   }
 
-  const movs = db
+  const where = and(...filters);
+
+  // Envelope SIEMPRE (D48): total = COUNT filtrado ANTES de la paginación,
+  // espejando el MISMO FROM + LEFT JOIN + WHERE (los filtros estadoId/grupoId
+  // referencian schema.socios — un count sin el join fallaría; patrón D33).
+  const totalRow = db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.movimientos)
+    .leftJoin(schema.socios, eq(schema.movimientos.socioId, schema.socios.id))
+    .where(where)
+    .get();
+
+  const items = db
     .select({
       id: schema.movimientos.id,
       tipo: schema.movimientos.tipo,
@@ -127,11 +141,13 @@ reportes.get('/libro-diario', (c) => {
     })
     .from(schema.movimientos)
     .leftJoin(schema.socios, eq(schema.movimientos.socioId, schema.socios.id))
-    .where(and(...filters))
-    .orderBy(schema.movimientos.fecha)
+    .where(where)
+    .orderBy(asc(schema.movimientos.fecha), desc(schema.movimientos.id))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize)
     .all();
 
-  return c.json(movs);
+  return c.json({ items, total: Number(totalRow?.n ?? 0), page, pageSize });
 });
 
 reportes.get('/resumen-socio/:id', (c) => {
