@@ -148,6 +148,7 @@ export default function AportesPage() {
     addAporte, updateAporte, removeAporte,
     aporteRegistros, aporteRegistrosTotal, aporteRegistrosPage, aporteRegistrosPageSize,
     aporteRegistrosLoading, aporteRegistrosError, fetchAporteRegistros, setAporteRegistrosPage,
+    setAporteRegistrosPageSize,
     pagarAporte, anularAporte, fetchPagosAporte,
     socios, fetchSocios, estadosSocio, accionesSocio, grupos, fetchConfig,
   } = useAppStore();
@@ -601,6 +602,7 @@ export default function AportesPage() {
             total={aporteRegistrosTotal}
             pageSize={aporteRegistrosPageSize}
             onPageChange={(p) => setAporteRegistrosPage(p, pagarFilters)}
+            onPageSizeChange={(s) => setAporteRegistrosPageSize(s, pagarFilters)}
           />
         </>
       )}

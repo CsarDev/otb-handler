@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../stores/app.store';
 import { socioPermiteUI } from '../lib/permisos';
-import { Badge } from '@otb/ui';
+import { Badge, Pagination } from '@otb/ui';
 
 type Tab = 'balance' | 'libro-diario' | 'resumen-socio';
 type BalanceMode = 'gestion-mes' | 'gestion' | 'rango' | 'todas';
@@ -22,8 +22,9 @@ export default function ReportesPage() {
   const {
     socios, fetchSocios,
     estadosSocio, accionesSocio, grupos, fetchConfig,
-    balanceReport, libroDiario, resumenSocio, reportsLoading,
-    fetchBalance, fetchLibroDiario, fetchResumenSocio,
+    balanceReport, libroDiario, libroDiarioTotal, libroDiarioPage, libroDiarioPageSize,
+    resumenSocio, reportsLoading,
+    fetchBalance, setLibroDiarioPage, setLibroDiarioPageSize, fetchResumenSocio,
   } = useAppStore();
 
   const [tab, setTab] = useState<Tab>('balance');
@@ -46,6 +47,26 @@ export default function ReportesPage() {
   const [rsEstadoId, setRsEstadoId] = useState('');
   const [rsGrupoId, setRsGrupoId] = useState('');
 
+  // D49: filtros mapeados del libro diario (undefined si vacíos) compartidos por
+  // el efecto de reset y por onPageChange/onPageSizeChange del Pagination — mismo
+  // objeto en ambos caminos (patrón D38 de multas/aportes). fechaDesde/fechaHasta
+  // son COMPARTIDOS con el modo 'rango' del balance — el mapeo preserva el
+  // comportamiento actual exactamente.
+  const hasLibroDiarioFilters = Boolean(
+    fechaDesde || fechaHasta || ldGestion || ldMes || (ldTipo !== 'todos') || ldEstadoId || ldGrupoId,
+  );
+  const libroDiarioFilters = hasLibroDiarioFilters
+    ? {
+        fechaDesde: fechaDesde || undefined,
+        fechaHasta: fechaHasta || undefined,
+        gestion: ldGestion || undefined,
+        mes: ldMes || undefined,
+        tipo: ldTipo === 'todos' ? undefined : ldTipo,
+        estadoId: ldEstadoId || undefined,
+        grupoId: ldGrupoId || undefined,
+      }
+    : undefined;
+
   useEffect(() => {
     fetchSocios();
     fetchConfig();
@@ -58,22 +79,16 @@ export default function ReportesPage() {
       else if (balanceMode === 'rango') fetchBalance(undefined, undefined, fechaDesde || undefined, fechaHasta || undefined);
       else fetchBalance();
     } else if (tab === 'libro-diario') {
-      // D47: firma refactorizada (filters?, page?) — el mapeo de filtros es el de
-      // D49 inline; el wiring completo (filtros extraídos, setLibroDiarioPage,
-      // Pagination, empty-state por total) llega en T5.3 (Slice C).
-      fetchLibroDiario({
-        fechaDesde: fechaDesde || undefined,
-        fechaHasta: fechaHasta || undefined,
-        gestion: ldGestion || undefined,
-        mes: ldMes || undefined,
-        tipo: ldTipo === 'todos' ? undefined : ldTipo,
-        estadoId: ldEstadoId || undefined,
-        grupoId: ldGrupoId || undefined,
-      });
+      // D49/D38: setLibroDiarioPage(1, filters) — reset a página 1 + refetch ante
+      // CUALQUIER cambio de filtros/tab. El dep NO incluye libroDiarioPage/
+      // libroDiarioPageSize (loop guard): onPageChange/onPageSizeChange pasan los
+      // filtros actuales y la identidad de los estados no cambia → el efecto no se
+      // re-dispara (sin doble fetch).
+      setLibroDiarioPage(1, libroDiarioFilters);
     } else if (tab === 'resumen-socio' && selectedSocioId) {
       fetchResumenSocio(selectedSocioId, rsGestion || undefined, rsMes || undefined, rsFechaDesde || undefined, rsFechaHasta || undefined, rsTipo === 'todos' ? undefined : rsTipo, rsEstadoId || undefined, rsGrupoId || undefined);
     }
-  }, [tab, balanceMode, gestion, mes, fechaDesde, fechaHasta, selectedSocioId, ldGestion, ldMes, ldTipo, ldEstadoId, ldGrupoId, rsGestion, rsMes, rsFechaDesde, rsFechaHasta, rsTipo, rsEstadoId, rsGrupoId, fetchBalance, fetchLibroDiario, fetchResumenSocio]);
+  }, [tab, balanceMode, gestion, mes, fechaDesde, fechaHasta, selectedSocioId, ldGestion, ldMes, ldTipo, ldEstadoId, ldGrupoId, rsGestion, rsMes, rsFechaDesde, rsFechaHasta, rsTipo, rsEstadoId, rsGrupoId, fetchBalance, setLibroDiarioPage, fetchResumenSocio]);
 
   const sociosConPermiso = socios.filter((s) =>
     socioPermiteUI(estadosSocio, accionesSocio, s.estadoId, 'reportes'),
@@ -270,7 +285,10 @@ export default function ReportesPage() {
             <input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Hasta" />
           </div>
 
-          {libroDiario.length === 0 && !reportsLoading && (
+          {/* D49: empty-state por TOTAL (no por items.length) — una página fuera de
+              rango (items vacíos, total > 0) NO debe mostrar la falsa "No hay
+              movimientos" (regla D38). */}
+          {libroDiarioTotal === 0 && !reportsLoading && (
             <div className="rounded-xl border bg-white p-12 text-center shadow-sm">
               <p className="text-gray-500">No hay movimientos</p>
             </div>
@@ -335,6 +353,17 @@ export default function ReportesPage() {
               ))}
             </div>
           )}
+
+          {/* D49: Pagination debajo de tabla y cards; total=0 → null (sin controles).
+              Si la página quedó fuera de rango (items vacíos, total > 0) se muestra
+              para poder volver, sin falsa empty-state. */}
+          <Pagination
+            page={libroDiarioPage}
+            total={libroDiarioTotal}
+            pageSize={libroDiarioPageSize}
+            onPageChange={(p) => setLibroDiarioPage(p, libroDiarioFilters)}
+            onPageSizeChange={(s) => setLibroDiarioPageSize(s, libroDiarioFilters)}
+          />
         </div>
       )}
 
