@@ -30,6 +30,7 @@ import type {
   AccionSocioInput,
   GrupoInput,
 } from '@otb/core';
+import { DEFAULT_PAGE_SIZE_OPTIONS } from '@otb/core';
 
 const BASE = '/api';
 
@@ -77,6 +78,11 @@ type MultaFilters = {
 };
 type EgresoFilters = { categoria?: string; fechaDesde?: string; fechaHasta?: string };
 
+// D47: clamp a las opciones canónicas [10,25,50,100] (D51); fuera de set → default 25.
+function clampPageSize(pageSize: number): number {
+  return (DEFAULT_PAGE_SIZE_OPTIONS as readonly number[]).includes(pageSize) ? pageSize : 25;
+}
+
 type DashboardData = {
   totalSocios: number;
   recaudado: number;
@@ -112,6 +118,7 @@ type AppState = {
   aporteRegistrosError: string | null;
   fetchAporteRegistros: (filters?: AporteFilters, page?: number) => Promise<void>;
   setAporteRegistrosPage: (page: number, filters?: AporteFilters) => Promise<void>;
+  setAporteRegistrosPageSize: (pageSize: number, filters?: AporteFilters) => Promise<void>;
   createAporte: (data: CrearAporteRequest) => Promise<GeneracionResult>;
   pagarAporte: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<AporteRegistro>;
 
@@ -123,6 +130,7 @@ type AppState = {
   multasError: string | null;
   fetchMultas: (filters?: MultaFilters, page?: number) => Promise<void>;
   setMultasPage: (page: number, filters?: MultaFilters) => Promise<void>;
+  setMultasPageSize: (pageSize: number, filters?: MultaFilters) => Promise<void>;
   createMultasBulk: (payload: BulkMultaRequest) => Promise<BulkMultaResponse>;
   createMulta: (data: Partial<Multa>) => Promise<Multa>;
   pagarMulta: (id: string, data: { monto?: number; numeroRecibo?: string; fechaPago?: string }) => Promise<Multa>;
@@ -296,6 +304,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ aporteRegistrosPage: page });
     return get().fetchAporteRegistros(filters, page);
   },
+  setAporteRegistrosPageSize: async (pageSize, filters) => {
+    // D47: clamp a las opciones canónicas, reset a página 1 y UN solo refetch.
+    // Los efectos de ruta (deps [tab, filters, setter]) no incluyen pageSize →
+    // sin doble fetch.
+    set({ aporteRegistrosPageSize: clampPageSize(pageSize), aporteRegistrosPage: 1 });
+    return get().fetchAporteRegistros(filters, 1);
+  },
   createAporte: async (data) => {
     // Generación simple definition-driven: { socioId, aporteId, gestion, mes? }
     // Endpoint conservado (D17); dedup-safe al re-ejecutar.
@@ -347,6 +362,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     // (onPageChange) como al reset a página 1 ante un cambio de filtros.
     set({ multasPage: page });
     return get().fetchMultas(filters, page);
+  },
+  setMultasPageSize: async (pageSize, filters) => {
+    // D47: clamp a las opciones canónicas, reset a página 1 y UN solo refetch.
+    // Los efectos de ruta (deps [tab, filters, setter]) no incluyen pageSize →
+    // sin doble fetch.
+    set({ multasPageSize: clampPageSize(pageSize), multasPage: 1 });
+    return get().fetchMultas(filters, 1);
   },
   createMultasBulk: async (payload) => {
     // D41: reemplaza el fetch crudo de la ruta; refresca la lista en página 1,
