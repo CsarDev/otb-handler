@@ -215,6 +215,10 @@ export type Paginated<T> = {
   pageSize: number; // echo del pageSize efectivo (clamped)
 };
 
+/** Opciones canónicas de pageSize (D51) — default del <select> y clamp del store. */
+export const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+export type PageSizeOption = (typeof DEFAULT_PAGE_SIZE_OPTIONS)[number];
+
 export type Multa = {
   id: string;
   socioId: string;
