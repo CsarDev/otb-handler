@@ -62,7 +62,7 @@ function SocioEstadoBadge({ multa, socioById }: { multa: Multa; socioById: Map<s
 }
 
 export default function MultasPage() {
-  const { multas, multasTotal, multasPage, multasPageSize, multasLoading, multasError, pagarMulta, anularMulta, createMultasBulk, setMultasPage } = useAppStore();
+  const { multas, multasTotal, multasPage, multasPageSize, multasLoading, multasError, pagarMulta, anularMulta, createMultasBulk, setMultasPage, setMultasPageSize } = useAppStore();
   const { socios, fetchSocios, actividades, fetchActividades } = useAppStore();
   const { estadosSocio, accionesSocio, grupos, fetchConfig } = useAppStore();
   const [tab, setTab] = useState<'crear' | 'listar'>('listar');
@@ -363,6 +363,7 @@ export default function MultasPage() {
             total={multasTotal}
             pageSize={multasPageSize}
             onPageChange={(p) => setMultasPage(p, listarFilters)}
+            onPageSizeChange={(s) => setMultasPageSize(s, listarFilters)}
           />
         </>
       )}
