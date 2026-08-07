@@ -152,8 +152,8 @@ describe('GET /api/reportes/libro-diario — envelope paginado (reports spec)', 
 
     // Página 1 = las 20 de enero (más antiguas) en id DESC + 5 de febrero en id DESC.
     const page1 = (await requestJson('/api/reportes/libro-diario?page=1&pageSize=25')).data;
-    const eneroDesc = Array.from({ length: 20 }, (_, i) => `m${20 - i}`.padStart(3, '0')); // m20..m01
-    const febreroDesc = Array.from({ length: 20 }, (_, i) => `m${40 - i}`.padStart(3, '0')); // m40..m21
+    const eneroDesc = Array.from({ length: 20 }, (_, i) => `m${String(20 - i).padStart(2, '0')}`); // m20..m01
+    const febreroDesc = Array.from({ length: 20 }, (_, i) => `m${String(40 - i).padStart(2, '0')}`); // m40..m21
     expect(page1.items.map((i: any) => i.id)).toEqual([...eneroDesc, ...febreroDesc.slice(0, 5)]);
 
     // Unión de páginas 1..3 = las 60, sin duplicados ni gaps.
@@ -179,7 +179,7 @@ describe('GET /api/reportes/libro-diario — envelope paginado (reports spec)', 
 
     // pageSize 20 → página 1 = SOLO enero (20 movs), id DESC.
     expect(data.items.map((i: any) => i.id)).toEqual(
-      Array.from({ length: 20 }, (_, i) => `m${20 - i}`.padStart(3, '0')),
+      Array.from({ length: 20 }, (_, i) => `m${String(20 - i).padStart(2, '0')}`),
     );
   });
 
