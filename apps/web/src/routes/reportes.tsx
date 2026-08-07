@@ -58,7 +58,18 @@ export default function ReportesPage() {
       else if (balanceMode === 'rango') fetchBalance(undefined, undefined, fechaDesde || undefined, fechaHasta || undefined);
       else fetchBalance();
     } else if (tab === 'libro-diario') {
-      fetchLibroDiario(fechaDesde || undefined, fechaHasta || undefined, ldGestion || undefined, ldMes || undefined, ldTipo === 'todos' ? undefined : ldTipo, ldEstadoId || undefined, ldGrupoId || undefined);
+      // D47: firma refactorizada (filters?, page?) — el mapeo de filtros es el de
+      // D49 inline; el wiring completo (filtros extraídos, setLibroDiarioPage,
+      // Pagination, empty-state por total) llega en T5.3 (Slice C).
+      fetchLibroDiario({
+        fechaDesde: fechaDesde || undefined,
+        fechaHasta: fechaHasta || undefined,
+        gestion: ldGestion || undefined,
+        mes: ldMes || undefined,
+        tipo: ldTipo === 'todos' ? undefined : ldTipo,
+        estadoId: ldEstadoId || undefined,
+        grupoId: ldGrupoId || undefined,
+      });
     } else if (tab === 'resumen-socio' && selectedSocioId) {
       fetchResumenSocio(selectedSocioId, rsGestion || undefined, rsMes || undefined, rsFechaDesde || undefined, rsFechaHasta || undefined, rsTipo === 'todos' ? undefined : rsTipo, rsEstadoId || undefined, rsGrupoId || undefined);
     }
