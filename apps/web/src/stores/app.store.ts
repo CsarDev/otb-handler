@@ -77,6 +77,8 @@ type MultaFilters = {
   grupoId?: string;
 };
 type EgresoFilters = { categoria?: string; fechaDesde?: string; fechaHasta?: string };
+// D57: filtros de la lista paginada de socios (espejo de los query params de GET /api/socios).
+type SociosListaFilters = { search?: string; estadoId?: string; grupoId?: string };
 type LibroDiarioFilters = {
   fechaDesde?: string;
   fechaHasta?: string;
@@ -119,6 +121,19 @@ type AppState = {
   deleteSocio: (id: string) => Promise<void>;
   bajaSocio: (id: string, motivo: string) => Promise<Socio>;
 
+  // D57: slice NUEVO sociosLista (paginado, patrón D38/D47). sociosListaFilters es el
+  // snapshot D58 de filtros activos para el refetch post-mutación a página 1 (D41/R6).
+  sociosLista: Socio[];
+  sociosListaTotal: number;
+  sociosListaPage: number;
+  sociosListaPageSize: number;
+  sociosListaLoading: boolean;
+  sociosListaError: string | null;
+  sociosListaFilters: SociosListaFilters | undefined;
+  fetchSociosLista: (filters?: SociosListaFilters, page?: number) => Promise<void>;
+  setSociosListaPage: (page: number, filters?: SociosListaFilters) => Promise<void>;
+  setSociosListaPageSize: (pageSize: number, filters?: SociosListaFilters) => Promise<void>;
+
   aporteRegistros: AporteRegistro[];
   aporteRegistrosTotal: number;
   aporteRegistrosPage: number;
@@ -147,9 +162,14 @@ type AppState = {
   anularAporte: (id: string, razon: string) => Promise<AporteRegistro>;
 
   egresos: Egreso[];
+  egresosTotal: number;
+  egresosPage: number;
+  egresosPageSize: number;
   egresosLoading: boolean;
   egresosError: string | null;
-  fetchEgresos: (filters?: EgresoFilters) => Promise<void>;
+  fetchEgresos: (filters?: EgresoFilters, page?: number) => Promise<void>;
+  setEgresosPage: (page: number, filters?: EgresoFilters) => Promise<void>;
+  setEgresosPageSize: (pageSize: number, filters?: EgresoFilters) => Promise<void>;
   createEgreso: (data: Partial<Egreso>) => Promise<Egreso>;
   updateEgreso: (id: string, data: Partial<Egreso>) => Promise<Egreso>;
   deleteEgreso: (id: string) => Promise<void>;
@@ -161,6 +181,17 @@ type AppState = {
   createActividad: (data: Partial<Actividad>) => Promise<Actividad>;
   updateActividad: (id: string, data: Partial<Actividad>) => Promise<Actividad>;
   deleteActividad: (id: string) => Promise<void>;
+
+  // D57: slice NUEVO actividadesLista (paginado, patrón D38/D47; SIN filtros server-side).
+  actividadesLista: Actividad[];
+  actividadesListaTotal: number;
+  actividadesListaPage: number;
+  actividadesListaPageSize: number;
+  actividadesListaLoading: boolean;
+  actividadesListaError: string | null;
+  fetchActividadesLista: (page?: number) => Promise<void>;
+  setActividadesListaPage: (page: number) => Promise<void>;
+  setActividadesListaPageSize: (pageSize: number) => Promise<void>;
 
   asistenciaRecords: Asistencia[];
   asistenciaLoading: boolean;
@@ -242,7 +273,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (estadoId) params.set('estadoId', estadoId);
       if (grupoId) params.set('grupoId', grupoId);
       const qs = params.toString() ? `?${params}` : '';
-      const data = await request<Socio[]>(`/socios${qs}`);
+      // T3.4/D54: el catálogo plano vive en /socios/catalogo (el GET / ahora es envelope).
+      const data = await request<Socio[]>(`/socios/catalogo${qs}`);
       set({ socios: data, sociosLoading: false });
     } catch (e) {
       set({ sociosError: (e as Error).message, sociosLoading: false });
@@ -254,6 +286,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     // T3.1/D16: el guardado genera cobros; refrescar los registros para que
     // aparezcan de inmediato en la lista (la lista de socios ya se actualizó).
     void get().fetchAporteRegistros();
+    // D58/R6: refetch de la lista paginada a página 1 preservando los filtros activos (snapshot).
+    void get().fetchSociosLista(get().sociosListaFilters, 1);
     return socio;
   },
   updateSocio: async (id, data) => {
@@ -261,11 +295,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ socios: get().socios.map((s) => (s.id === id ? socio : s)) });
     // T3.1/D16: un PUT puede generar cobros (nuevas asignaciones/membresías).
     void get().fetchAporteRegistros();
+    // D58/R6: refetch de la lista paginada a página 1 preservando los filtros activos (snapshot).
+    void get().fetchSociosLista(get().sociosListaFilters, 1);
     return socio;
   },
   deleteSocio: async (id) => {
     await request(`/socios/${id}`, { method: 'DELETE' });
     set({ socios: get().socios.filter((s) => s.id !== id) });
+    // D58/R6: refetch de la lista paginada a página 1 preservando los filtros activos (snapshot).
+    void get().fetchSociosLista(get().sociosListaFilters, 1);
   },
   bajaSocio: async (id, motivo) => {
     const socio = await request<Socio>(`/socios/${id}/baja`, {
@@ -273,7 +311,57 @@ export const useAppStore = create<AppState>((set, get) => ({
       body: JSON.stringify({ motivo }),
     });
     set({ socios: get().socios.map((s) => (s.id === id ? socio : s)) });
+    // D58/R6: refetch de la lista paginada a página 1 preservando los filtros activos (snapshot).
+    void get().fetchSociosLista(get().sociosListaFilters, 1);
     return socio;
+  },
+
+  // ── slice NUEVO sociosLista (T3.1, patrón D38/D47 verbatim de fetchMultas/setMultasPage) ──
+  sociosLista: [],
+  sociosListaTotal: 0,
+  sociosListaPage: 1,
+  sociosListaPageSize: 25,
+  sociosListaLoading: false,
+  sociosListaError: null,
+  sociosListaFilters: undefined,
+  fetchSociosLista: async (filters, page) => {
+    set({ sociosListaLoading: true, sociosListaError: null });
+    try {
+      const params = new URLSearchParams();
+      if (filters?.search) params.set('search', filters.search);
+      if (filters?.estadoId) params.set('estadoId', filters.estadoId);
+      if (filters?.grupoId) params.set('grupoId', filters.grupoId);
+      // D38: SIEMPRE enviar page/pageSize (defaults del store 1/25, cap del API 100).
+      params.set('page', String(page ?? get().sociosListaPage));
+      params.set('pageSize', String(get().sociosListaPageSize));
+      const qs = params.toString() ? `?${params}` : '';
+      const data = await request<Paginated<Socio>>(`/socios${qs}`);
+      // D33: unpack del envelope — items→sociosLista, total→sociosListaTotal, echo de page/pageSize.
+      // D58: snapshot de filtros activos en cada fetch exitoso (refetch post-mutación a pág. 1).
+      set({
+        sociosLista: data.items,
+        sociosListaTotal: data.total,
+        sociosListaPage: data.page,
+        sociosListaPageSize: data.pageSize,
+        sociosListaLoading: false,
+        sociosListaFilters: filters,
+      });
+    } catch (e) {
+      set({ sociosListaError: (e as Error).message, sociosListaLoading: false });
+    }
+  },
+  setSociosListaPage: async (page, filters) => {
+    // D38: único punto de mutación de página — sirve TANTO al cambio de página
+    // (onPageChange) como al reset a página 1 ante un cambio de filtros.
+    set({ sociosListaPage: page });
+    return get().fetchSociosLista(filters, page);
+  },
+  setSociosListaPageSize: async (pageSize, filters) => {
+    // D47: clamp a las opciones canónicas, reset a página 1 y UN solo refetch.
+    // Los efectos de ruta (deps [tab, filters, setter]) no incluyen pageSize →
+    // sin doble fetch.
+    set({ sociosListaPageSize: clampPageSize(pageSize), sociosListaPage: 1 });
+    return get().fetchSociosLista(filters, 1);
   },
 
   aporteRegistros: [],
@@ -416,36 +504,59 @@ export const useAppStore = create<AppState>((set, get) => ({
     return aporte;
   },
 
+  // ── slice egresos (T3.3, paginado en el MISMO slice; patrón D38/D47 verbatim) ──
   egresos: [],
+  egresosTotal: 0,
+  egresosPage: 1,
+  egresosPageSize: 25,
   egresosLoading: false,
   egresosError: null,
-  fetchEgresos: async (filters) => {
+  fetchEgresos: async (filters, page) => {
     set({ egresosLoading: true, egresosError: null });
     try {
       const params = new URLSearchParams();
       if (filters?.categoria) params.set('categoria', filters.categoria);
       if (filters?.fechaDesde) params.set('fechaDesde', filters.fechaDesde);
       if (filters?.fechaHasta) params.set('fechaHasta', filters.fechaHasta);
+      // D38: SIEMPRE enviar page/pageSize (defaults del store 1/25, cap del API 100).
+      params.set('page', String(page ?? get().egresosPage));
+      params.set('pageSize', String(get().egresosPageSize));
       const qs = params.toString() ? `?${params}` : '';
-      const data = await request<Egreso[]>(`/egresos${qs}`);
-      set({ egresos: data, egresosLoading: false });
+      const data = await request<Paginated<Egreso>>(`/egresos${qs}`);
+      // D33: unpack del envelope — items→egresos, total→egresosTotal, echo de page/pageSize.
+      set({
+        egresos: data.items,
+        egresosTotal: data.total,
+        egresosPage: data.page,
+        egresosPageSize: data.pageSize,
+        egresosLoading: false,
+      });
     } catch (e) {
       set({ egresosError: (e as Error).message, egresosLoading: false });
     }
   },
+  setEgresosPage: async (page, filters) => {
+    // D38: único punto de mutación de página — sirve TANTO al cambio de página
+    // (onPageChange) como al reset a página 1 ante un cambio de filtros.
+    set({ egresosPage: page });
+    return get().fetchEgresos(filters, page);
+  },
+  setEgresosPageSize: async (pageSize, filters) => {
+    // D47: clamp a las opciones canónicas, reset a página 1 y UN solo refetch.
+    set({ egresosPageSize: clampPageSize(pageSize), egresosPage: 1 });
+    return get().fetchEgresos(filters, 1);
+  },
   createEgreso: async (data) => {
-    const egreso = await request<Egreso>('/egresos', { method: 'POST', body: JSON.stringify(data) });
-    set({ egresos: [...get().egresos, egreso] });
-    return egreso;
+    // D58: mutaciones route-driven — devuelven la entidad y la RUTA refresca la lista
+    // vía setEgresosPage(1, mappedFilters). La lista NO se muta in-place (evita el
+    // prepend optimista de un egreso con fecha vieja en la página actual).
+    return request<Egreso>('/egresos', { method: 'POST', body: JSON.stringify(data) });
   },
   updateEgreso: async (id, data) => {
-    const egreso = await request<Egreso>(`/egresos/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-    set({ egresos: get().egresos.map((e) => (e.id === id ? egreso : e)) });
-    return egreso;
+    return request<Egreso>(`/egresos/${id}`, { method: 'PUT', body: JSON.stringify(data) });
   },
   deleteEgreso: async (id) => {
     await request(`/egresos/${id}`, { method: 'DELETE' });
-    set({ egresos: get().egresos.filter((e) => e.id !== id) });
   },
 
   actividades: [],
@@ -454,7 +565,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchActividades: async () => {
     set({ actividadesLoading: true, actividadesError: null });
     try {
-      const data = await request<Actividad[]>('/actividades');
+      // T3.4/D54: el catálogo plano vive en /actividades/catalogo (el GET / ahora es envelope).
+      const data = await request<Actividad[]>('/actividades/catalogo');
       set({ actividades: data, actividadesLoading: false });
     } catch (e) {
       set({ actividadesError: (e as Error).message, actividadesLoading: false });
@@ -463,16 +575,61 @@ export const useAppStore = create<AppState>((set, get) => ({
   createActividad: async (data) => {
     const actividad = await request<Actividad>('/actividades', { method: 'POST', body: JSON.stringify(data) });
     set({ actividades: [...get().actividades, actividad] });
+    // D58: refetch de la lista paginada a página 1 (sin filtros server-side).
+    void get().fetchActividadesLista(1);
     return actividad;
   },
   updateActividad: async (id, data) => {
     const actividad = await request<Actividad>(`/actividades/${id}`, { method: 'PUT', body: JSON.stringify(data) });
     set({ actividades: get().actividades.map((a) => (a.id === id ? actividad : a)) });
+    // D58: refetch de la lista paginada a página 1 (sin filtros server-side).
+    void get().fetchActividadesLista(1);
     return actividad;
   },
   deleteActividad: async (id) => {
     await request(`/actividades/${id}`, { method: 'DELETE' });
     set({ actividades: get().actividades.filter((a) => a.id !== id) });
+    // D58: refetch de la lista paginada a página 1 (sin filtros server-side).
+    void get().fetchActividadesLista(1);
+  },
+
+  // ── slice NUEVO actividadesLista (T3.2, patrón D38/D47 verbatim; SIN filtros server-side) ──
+  actividadesLista: [],
+  actividadesListaTotal: 0,
+  actividadesListaPage: 1,
+  actividadesListaPageSize: 25,
+  actividadesListaLoading: false,
+  actividadesListaError: null,
+  fetchActividadesLista: async (page) => {
+    set({ actividadesListaLoading: true, actividadesListaError: null });
+    try {
+      const params = new URLSearchParams();
+      // D38: SIEMPRE enviar page/pageSize (defaults del store 1/25, cap del API 100).
+      params.set('page', String(page ?? get().actividadesListaPage));
+      params.set('pageSize', String(get().actividadesListaPageSize));
+      const qs = `?${params}`;
+      const data = await request<Paginated<Actividad>>(`/actividades${qs}`);
+      // D33: unpack del envelope — items→actividadesLista, total→actividadesListaTotal, echo de page/pageSize.
+      set({
+        actividadesLista: data.items,
+        actividadesListaTotal: data.total,
+        actividadesListaPage: data.page,
+        actividadesListaPageSize: data.pageSize,
+        actividadesListaLoading: false,
+      });
+    } catch (e) {
+      set({ actividadesListaError: (e as Error).message, actividadesListaLoading: false });
+    }
+  },
+  setActividadesListaPage: async (page) => {
+    // D38: único punto de mutación de página (no hay filtros server-side).
+    set({ actividadesListaPage: page });
+    return get().fetchActividadesLista(page);
+  },
+  setActividadesListaPageSize: async (pageSize) => {
+    // D47: clamp a las opciones canónicas, reset a página 1 y UN solo refetch.
+    set({ actividadesListaPageSize: clampPageSize(pageSize), actividadesListaPage: 1 });
+    return get().fetchActividadesLista(1);
   },
 
   asistenciaRecords: [],

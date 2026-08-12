@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
+import { Pagination } from '@otb/ui';
 
 const egresoSchema = z.object({
   categoria: z.string().min(1, 'Requerido'),
@@ -30,7 +31,9 @@ const CATEGORIAS = [
 ];
 
 export default function EgresosPage() {
-  const { egresos, egresosLoading, egresosError, fetchEgresos, createEgreso, updateEgreso, deleteEgreso } = useAppStore();
+  // D59: slice egresos ahora es paginado (D57); fetchEgresos ya no se llama
+  // desde la ruta — el efecto D38 y las mutaciones pasan por setEgresosPage.
+  const { egresos, egresosTotal, egresosPage, egresosPageSize, egresosLoading, egresosError, setEgresosPage, setEgresosPageSize, createEgreso, updateEgreso, deleteEgreso } = useAppStore();
   const [filters, setFilters] = useState({ categoria: '', fechaDesde: '', fechaHasta: '' });
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<{ id: string } & EgresoForm | null>(null);
@@ -40,13 +43,24 @@ export default function EgresosPage() {
     defaultValues: defaultEgreso,
   });
 
+  // D59/D38: filtros mapeados (undefined si vacíos) compartidos por el efecto de
+  // reset y por onPageChange/onPageSizeChange del Pagination (patrón multas.tsx).
+  const hasEgresosFilters = Boolean(filters.categoria || filters.fechaDesde || filters.fechaHasta);
+  const egresosFilters = hasEgresosFilters
+    ? {
+        categoria: filters.categoria || undefined,
+        fechaDesde: filters.fechaDesde || undefined,
+        fechaHasta: filters.fechaHasta || undefined,
+      }
+    : undefined;
+
   useEffect(() => {
-    fetchEgresos(filters.categoria || filters.fechaDesde || filters.fechaHasta ? {
-      categoria: filters.categoria || undefined,
-      fechaDesde: filters.fechaDesde || undefined,
-      fechaHasta: filters.fechaHasta || undefined,
-    } : undefined);
-  }, [filters, fetchEgresos]);
+    // D38: reset a página 1 ante cualquier cambio de filtros (cubre también el
+    // mount, reemplazando fetchEgresos). El dep NO incluye egresosPage/
+    // egresosPageSize (loop guard): onPageChange pasa los filtros actuales
+    // explícitamente.
+    setEgresosPage(1, egresosFilters);
+  }, [filters, setEgresosPage]);
 
   function openCreate() {
     setEditing(null);
@@ -68,11 +82,16 @@ export default function EgresosPage() {
     }
     setModalOpen(false);
     setEditing(null);
+    // D58: refetch route-driven a página 1 preservando los filtros activos
+    // (las mutaciones ya no mutan la lista in-place — U3).
+    void setEgresosPage(1, egresosFilters);
   }
 
   async function handleDelete(id: string) {
     if (confirm('¿Eliminar este egreso?')) {
       await deleteEgreso(id);
+      // D58: refetch route-driven a página 1 preservando los filtros activos.
+      void setEgresosPage(1, egresosFilters);
     }
   }
 
@@ -116,7 +135,9 @@ export default function EgresosPage() {
       {egresosLoading && <p className="text-gray-500">Cargando...</p>}
       {egresosError && <p className="text-red-600">Error: {egresosError}</p>}
 
-      {!egresosLoading && !egresosError && egresos.length === 0 && (
+      {/* D38: empty-state por TOTAL (no por items.length) — una página fuera de
+          rango (items vacíos, total > 0) NO debe mostrar la falsa "No hay egresos". */}
+      {!egresosLoading && !egresosError && egresosTotal === 0 && (
         <div className="rounded-xl border bg-white p-12 text-center">
           <p className="text-gray-500">No hay egresos registrados</p>
         </div>
@@ -165,6 +186,18 @@ export default function EgresosPage() {
           </table>
         </div>
       )}
+
+      {/* D37/D38: Pagination debajo de la tabla; total=0 → null (sin controles).
+          Si la página quedó fuera de rango (items vacíos, total > 0) se muestra
+          para poder volver, sin falsa empty-state. onPageChange/onPageSizeChange
+          pasan los filtros actuales (egresosFilters) explícitamente (D59). */}
+      <Pagination
+        page={egresosPage}
+        total={egresosTotal}
+        pageSize={egresosPageSize}
+        onPageChange={(p) => setEgresosPage(p, egresosFilters)}
+        onPageSizeChange={(s) => setEgresosPageSize(s, egresosFilters)}
+      />
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">

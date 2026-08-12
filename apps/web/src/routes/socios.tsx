@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore, selectAportesActivos } from '../stores/app.store';
-import { Badge, MultiSelect } from '@otb/ui';
+import { Badge, MultiSelect, Pagination } from '@otb/ui';
 import type { Socio, Grupo, Aporte } from '@otb/core';
 
 const socioSchema = z.object({
@@ -124,8 +124,13 @@ function CobroToast({ message }: { message: string | null }) {
 }
 
 export default function SociosPage() {
+  // D59: la página migra del slice catálogo `socios` al slice paginado
+  // `sociosLista` (D57). createSocio/updateSocio/bajaSocio/fetchConfig se
+  // mantienen; el catálogo completo ya no se fetchea acá (lo consume el resto).
   const {
-    socios, sociosLoading, sociosError, fetchSocios, createSocio, updateSocio, bajaSocio,
+    sociosLista, sociosListaTotal, sociosListaPage, sociosListaPageSize,
+    sociosListaLoading, sociosListaError, setSociosListaPage, setSociosListaPageSize,
+    createSocio, updateSocio, bajaSocio,
     estadosSocio, grupos, aportes, fetchConfig,
   } = useAppStore();
   const [search, setSearch] = useState('');
@@ -159,17 +164,22 @@ export default function SociosPage() {
     fetchConfig();
   }, [fetchConfig]);
 
-  useEffect(() => {
-    fetchSocios();
-  }, [fetchSocios]);
+  // D59/D38: filtros mapeados (undefined si vacíos) compartidos por el efecto de
+  // reset y por onPageChange/onPageSizeChange del Pagination — mismo objeto en
+  // ambos caminos (patrón multas.tsx/reportes.tsx).
+  const listaFilters = {
+    search: search || undefined,
+    estadoId: estadoFilter || undefined,
+    grupoId: grupoFilter || undefined,
+  };
 
   useEffect(() => {
-    const timer = setTimeout(
-      () => fetchSocios(search || undefined, estadoFilter || undefined, grupoFilter || undefined),
-      300,
-    );
-    return () => clearTimeout(timer);
-  }, [search, estadoFilter, grupoFilter, fetchSocios]);
+    // D38: reset a página 1 ante cualquier cambio de filtros (cubre también el
+    // mount con filtros vacíos, reemplazando el fetch flat + debounce). El dep
+    // NO incluye sociosListaPage/sociosListaPageSize (loop guard): onPageChange
+    // pasa los filtros actuales explícitamente.
+    setSociosListaPage(1, listaFilters);
+  }, [search, estadoFilter, grupoFilter, setSociosListaPage]);
 
   const estadoBaja = estadosSocio.find((e) => e.esBaja === 1);
 
@@ -279,17 +289,19 @@ export default function SociosPage() {
         </select>
       </div>
 
-      {sociosLoading && <p className="text-gray-500">Cargando...</p>}
-      {sociosError && <p className="text-red-600">Error: {sociosError}</p>}
+      {sociosListaLoading && <p className="text-gray-500">Cargando...</p>}
+      {sociosListaError && <p className="text-red-600">Error: {sociosListaError}</p>}
 
-      {!sociosLoading && !sociosError && socios.length === 0 && (
+      {/* D38: empty-state por TOTAL (no por items.length) — una página fuera de
+          rango (items vacíos, total > 0) NO debe mostrar la falsa "No hay socios". */}
+      {!sociosListaLoading && !sociosListaError && sociosListaTotal === 0 && (
         <div className="rounded-xl border bg-white p-12 text-center">
           <p className="text-gray-500">No hay socios registrados</p>
         </div>
       )}
 
       {/* ── Tabla (sm+) ── */}
-      {socios.length > 0 && (
+      {sociosLista.length > 0 && (
         <div className="hidden overflow-x-auto rounded-xl border bg-white shadow-sm sm:block">
           <table className="w-full text-left text-sm">
             <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
@@ -304,7 +316,7 @@ export default function SociosPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {socios.map((s) => (
+              {sociosLista.map((s) => (
                 <tr key={s.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium">{s.nombre} {s.apellidoPaterno}</td>
                   <td className="px-4 py-3">{s.ci || '—'}</td>
@@ -348,9 +360,9 @@ export default function SociosPage() {
       )}
 
       {/* ── Cards apiladas (móvil ~360px) ── */}
-      {socios.length > 0 && (
+      {sociosLista.length > 0 && (
         <div className="space-y-3 sm:hidden">
-          {socios.map((s) => (
+          {sociosLista.map((s) => (
             <div key={s.id} className="rounded-xl border bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="font-medium text-gray-900">{s.nombre} {s.apellidoPaterno}</div>
@@ -404,6 +416,18 @@ export default function SociosPage() {
           ))}
         </div>
       )}
+
+      {/* D37/D38: Pagination debajo de tabla y cards; total=0 → null (sin controles).
+          Si la página quedó fuera de rango (items vacíos, total > 0) se muestra para
+          poder volver, sin falsa empty-state. onPageChange/onPageSizeChange pasan
+          los filtros actuales (listaFilters) explícitamente (D59). */}
+      <Pagination
+        page={sociosListaPage}
+        total={sociosListaTotal}
+        pageSize={sociosListaPageSize}
+        onPageChange={(p) => setSociosListaPage(p, listaFilters)}
+        onPageSizeChange={(s) => setSociosListaPageSize(s, listaFilters)}
+      />
 
       {/* ── Modal crear/editar ── */}
       {modalOpen && (
