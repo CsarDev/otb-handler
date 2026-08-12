@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
+import { Pagination } from '@otb/ui';
 
 const actividadSchema = z.object({
   tipoId: z.string().min(1, 'Requerido'),
@@ -14,7 +15,10 @@ const actividadSchema = z.object({
 type ActividadForm = z.infer<typeof actividadSchema>;
 
 export default function ActividadesPage() {
-  const { actividades, actividadesLoading, actividadesError, fetchActividades, createActividad, updateActividad, deleteActividad, tiposActividad } = useAppStore();
+  // D59: la página migra del slice catálogo `actividades` al slice paginado
+  // `actividadesLista` (D57). El catálogo lo siguen consumiendo multas.tsx y
+  // asistencia.tsx (selectores) — acá ya no se fetchea.
+  const { actividadesLista, actividadesListaTotal, actividadesListaPage, actividadesListaPageSize, actividadesListaLoading, actividadesListaError, setActividadesListaPage, setActividadesListaPageSize, createActividad, updateActividad, deleteActividad, tiposActividad } = useAppStore();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<{ id: string } & ActividadForm | null>(null);
 
@@ -24,8 +28,11 @@ export default function ActividadesPage() {
   });
 
   useEffect(() => {
-    fetchActividades();
-  }, [fetchActividades]);
+    // D38: fetch de la página 1 (sin filtros server-side). El dep NO incluye
+    // page/pageSize (loop guard) — onPageChange/onPageSizeChange pasan por
+    // setActividadesListaPage/setActividadesListaPageSize.
+    setActividadesListaPage(1);
+  }, [setActividadesListaPage]);
 
   function openCreate() {
     setEditing(null);
@@ -33,7 +40,7 @@ export default function ActividadesPage() {
     setModalOpen(true);
   }
 
-  function openEdit(a: typeof actividades[0]) {
+  function openEdit(a: typeof actividadesLista[0]) {
     setEditing({ id: a.id, tipoId: a.tipoId, fecha: a.fecha, hora: a.hora ?? '', descripcion: a.descripcion ?? '' });
     form.reset({ tipoId: a.tipoId, fecha: a.fecha, hora: a.hora ?? '', descripcion: a.descripcion ?? '' });
     setModalOpen(true);
@@ -67,16 +74,19 @@ export default function ActividadesPage() {
         </button>
       </div>
 
-      {actividadesLoading && <p className="text-gray-500">Cargando...</p>}
-      {actividadesError && <p className="text-red-600">Error: {actividadesError}</p>}
+      {actividadesListaLoading && <p className="text-gray-500">Cargando...</p>}
+      {actividadesListaError && <p className="text-red-600">Error: {actividadesListaError}</p>}
 
-      {!actividadesLoading && !actividadesError && actividades.length === 0 && (
+      {/* D38: empty-state por TOTAL (no por items.length) — una página fuera de
+          rango (items vacíos, total > 0) NO debe mostrar la falsa "No hay
+          actividades". */}
+      {!actividadesListaLoading && !actividadesListaError && actividadesListaTotal === 0 && (
         <div className="rounded-xl border bg-white p-12 text-center">
           <p className="text-gray-500">No hay actividades registradas</p>
         </div>
       )}
 
-      {actividades.length > 0 && (
+      {actividadesLista.length > 0 && (
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
           <table className="w-full text-left text-sm">
             <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
@@ -89,7 +99,7 @@ export default function ActividadesPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {actividades.map((a) => (
+              {actividadesLista.map((a) => (
                 <tr key={a.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">{a.tipoNombre ?? a.tipoId}</td>
 
@@ -116,6 +126,18 @@ export default function ActividadesPage() {
           </table>
         </div>
       )}
+
+      {/* D37/D38: Pagination debajo de la tabla; total=0 → null (sin controles).
+          Si la página quedó fuera de rango (items vacíos, total > 0) se muestra
+          para poder volver, sin falsa empty-state. Sin filtros server-side →
+          onPageChange/onPageSizeChange sin argumentos extra (D59). */}
+      <Pagination
+        page={actividadesListaPage}
+        total={actividadesListaTotal}
+        pageSize={actividadesListaPageSize}
+        onPageChange={(p) => setActividadesListaPage(p)}
+        onPageSizeChange={(s) => setActividadesListaPageSize(s)}
+      />
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
