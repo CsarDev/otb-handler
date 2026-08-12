@@ -182,6 +182,17 @@ type AppState = {
   updateActividad: (id: string, data: Partial<Actividad>) => Promise<Actividad>;
   deleteActividad: (id: string) => Promise<void>;
 
+  // D57: slice NUEVO actividadesLista (paginado, patrón D38/D47; SIN filtros server-side).
+  actividadesLista: Actividad[];
+  actividadesListaTotal: number;
+  actividadesListaPage: number;
+  actividadesListaPageSize: number;
+  actividadesListaLoading: boolean;
+  actividadesListaError: string | null;
+  fetchActividadesLista: (page?: number) => Promise<void>;
+  setActividadesListaPage: (page: number) => Promise<void>;
+  setActividadesListaPageSize: (pageSize: number) => Promise<void>;
+
   asistenciaRecords: Asistencia[];
   asistenciaLoading: boolean;
   asistenciaError: string | null;
@@ -554,7 +565,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchActividades: async () => {
     set({ actividadesLoading: true, actividadesError: null });
     try {
-      const data = await request<Actividad[]>('/actividades');
+      // T3.4/D54: el catálogo plano vive en /actividades/catalogo (el GET / ahora es envelope).
+      const data = await request<Actividad[]>('/actividades/catalogo');
       set({ actividades: data, actividadesLoading: false });
     } catch (e) {
       set({ actividadesError: (e as Error).message, actividadesLoading: false });
@@ -563,16 +575,61 @@ export const useAppStore = create<AppState>((set, get) => ({
   createActividad: async (data) => {
     const actividad = await request<Actividad>('/actividades', { method: 'POST', body: JSON.stringify(data) });
     set({ actividades: [...get().actividades, actividad] });
+    // D58: refetch de la lista paginada a página 1 (sin filtros server-side).
+    void get().fetchActividadesLista(1);
     return actividad;
   },
   updateActividad: async (id, data) => {
     const actividad = await request<Actividad>(`/actividades/${id}`, { method: 'PUT', body: JSON.stringify(data) });
     set({ actividades: get().actividades.map((a) => (a.id === id ? actividad : a)) });
+    // D58: refetch de la lista paginada a página 1 (sin filtros server-side).
+    void get().fetchActividadesLista(1);
     return actividad;
   },
   deleteActividad: async (id) => {
     await request(`/actividades/${id}`, { method: 'DELETE' });
     set({ actividades: get().actividades.filter((a) => a.id !== id) });
+    // D58: refetch de la lista paginada a página 1 (sin filtros server-side).
+    void get().fetchActividadesLista(1);
+  },
+
+  // ── slice NUEVO actividadesLista (T3.2, patrón D38/D47 verbatim; SIN filtros server-side) ──
+  actividadesLista: [],
+  actividadesListaTotal: 0,
+  actividadesListaPage: 1,
+  actividadesListaPageSize: 25,
+  actividadesListaLoading: false,
+  actividadesListaError: null,
+  fetchActividadesLista: async (page) => {
+    set({ actividadesListaLoading: true, actividadesListaError: null });
+    try {
+      const params = new URLSearchParams();
+      // D38: SIEMPRE enviar page/pageSize (defaults del store 1/25, cap del API 100).
+      params.set('page', String(page ?? get().actividadesListaPage));
+      params.set('pageSize', String(get().actividadesListaPageSize));
+      const qs = `?${params}`;
+      const data = await request<Paginated<Actividad>>(`/actividades${qs}`);
+      // D33: unpack del envelope — items→actividadesLista, total→actividadesListaTotal, echo de page/pageSize.
+      set({
+        actividadesLista: data.items,
+        actividadesListaTotal: data.total,
+        actividadesListaPage: data.page,
+        actividadesListaPageSize: data.pageSize,
+        actividadesListaLoading: false,
+      });
+    } catch (e) {
+      set({ actividadesListaError: (e as Error).message, actividadesListaLoading: false });
+    }
+  },
+  setActividadesListaPage: async (page) => {
+    // D38: único punto de mutación de página (no hay filtros server-side).
+    set({ actividadesListaPage: page });
+    return get().fetchActividadesLista(page);
+  },
+  setActividadesListaPageSize: async (pageSize) => {
+    // D47: clamp a las opciones canónicas, reset a página 1 y UN solo refetch.
+    set({ actividadesListaPageSize: clampPageSize(pageSize), actividadesListaPage: 1 });
+    return get().fetchActividadesLista(1);
   },
 
   asistenciaRecords: [],
