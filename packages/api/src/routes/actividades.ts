@@ -1,18 +1,46 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, getTableColumns } from 'drizzle-orm';
+import { eq, getTableColumns, sql, desc } from 'drizzle-orm';
+import { parsePaginacion } from '../lib/paginacion';
 
 const actividades = new Hono();
 
+// SELECT compartido por GET / y GET /catalogo (D55): columnas de actividades +
+// tipoNombre via LEFT JOIN tipos_actividad (regresión join-fixes R3 — null si
+// el tipo no existe).
+const selectActividadesConTipo = () =>
+  db
+    .select({
+      ...getTableColumns(schema.actividades),
+      tipoNombre: schema.tiposActividad.nombre,
+    })
+    .from(schema.actividades)
+    .leftJoin(schema.tiposActividad, eq(schema.actividades.tipoId, schema.tiposActividad.id));
+
+// Envelope Paginated<Actividad> SIEMPRE (D55): sin filtros server-side → COUNT
+// trivial count(*) sobre actividades; ORDER BY desc(fecha), desc(id) = más
+// reciente primero, tiebreak PK (orden total — D34).
 actividades.get('/', (c) => {
+  const { page, pageSize } = parsePaginacion(c.req.query());
+
+  // COUNT espejo: tabla simple, sin joins ni filtros → count(*) de actividades.
+  const total = db.select({ n: sql<number>`count(*)` }).from(schema.actividades).get();
+  const items = selectActividadesConTipo()
+    .orderBy(desc(schema.actividades.fecha), desc(schema.actividades.id))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize)
+    .all();
+
+  return c.json({ items, total: Number(total?.n ?? 0), page, pageSize });
+});
+
+// NUEVO GET /catalogo — array plano completo con tipoNombre, mismo ORDER BY,
+// IGNORA page/pageSize (R4). Declarado ANTES de las rutas /:id (D54). Lo
+// consumen como catálogo los selectores de multas.tsx/asistencia.tsx.
+actividades.get('/catalogo', (c) => {
   return c.json(
-    db
-      .select({
-        ...getTableColumns(schema.actividades),
-        tipoNombre: schema.tiposActividad.nombre,
-      })
-      .from(schema.actividades)
-      .leftJoin(schema.tiposActividad, eq(schema.actividades.tipoId, schema.tiposActividad.id))
+    selectActividadesConTipo()
+      .orderBy(desc(schema.actividades.fecha), desc(schema.actividades.id))
       .all(),
   );
 });
