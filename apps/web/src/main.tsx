@@ -25,6 +25,10 @@ import ActividadesPage from './routes/actividades';
 import AsistenciaPage from './routes/asistencia';
 import ConfigPage from './routes/config';
 import ReportesPage from './routes/reportes';
+import { LoginPage } from './routes/login';
+import { RegisterPage } from './routes/register';
+import { ForgotPasswordPage } from './routes/forgot-password';
+import { ResetPasswordPage } from './routes/reset-password';
 
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: DashboardPage });
 const sociosRoute = createRoute({ getParentRoute: () => rootRoute, path: '/socios', component: SociosPage });
@@ -35,6 +39,10 @@ const actividadesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/
 const asistenciaRoute = createRoute({ getParentRoute: () => rootRoute, path: '/asistencia', component: AsistenciaPage });
 const configRoute = createRoute({ getParentRoute: () => rootRoute, path: '/config', component: ConfigPage });
 const reportesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/reportes', component: ReportesPage });
+const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: '/login', component: LoginPage });
+const registerRoute = createRoute({ getParentRoute: () => rootRoute, path: '/register', component: RegisterPage });
+const forgotPasswordRoute = createRoute({ getParentRoute: () => rootRoute, path: '/forgot-password', component: ForgotPasswordPage });
+const resetPasswordRoute = createRoute({ getParentRoute: () => rootRoute, path: '/reset-password', component: ResetPasswordPage });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -46,6 +54,10 @@ const routeTree = rootRoute.addChildren([
   asistenciaRoute,
   configRoute,
   reportesRoute,
+  loginRoute,
+  registerRoute,
+  forgotPasswordRoute,
+  resetPasswordRoute,
 ]);
 
 const router = createRouter({ routeTree });

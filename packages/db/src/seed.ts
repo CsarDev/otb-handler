@@ -30,6 +30,11 @@ const {
   grupos,
   socioGrupos,
   socioAportes,
+  users,
+  roles,
+  permissions,
+  userRoles,
+  rolePermissions,
 } = schema;
 
 const dbUrl = process.env.DB_URL ?? './otb.db';
@@ -670,11 +675,118 @@ const modulesConfigData = [
   { id: id(), moduleName: 'reportes', enabled: true, config: JSON.stringify({ version: '1.0.0' }) },
 ];
 
+// RBAC seed data
+const ROLES_DATA = [
+  { id: id(), name: 'admin', description: 'Administrador con todos los permisos' },
+  { id: id(), name: 'tesorero', description: 'Gestión financiera y cobros' },
+  { id: id(), name: 'secretario', description: 'Gestión administrativa' },
+  { id: id(), name: 'vocal', description: 'Lectura y participación básica' },
+  { id: id(), name: 'socio', description: 'Acceso limitado a datos propios' },
+];
+
+const PERMISSIONS_DATA = [
+  // Socios
+  { id: id(), resource: 'socios', action: 'read', description: 'Ver socios' },
+  { id: id(), resource: 'socios', action: 'create', description: 'Crear socios' },
+  { id: id(), resource: 'socios', action: 'update', description: 'Editar socios' },
+  { id: id(), resource: 'socios', action: 'delete', description: 'Eliminar socios' },
+  // Aportes
+  { id: id(), resource: 'aportes', action: 'read', description: 'Ver aportes' },
+  { id: id(), resource: 'aportes', action: 'create', description: 'Crear aportes' },
+  { id: id(), resource: 'aportes', action: 'update', description: 'Editar aportes' },
+  { id: id(), resource: 'aportes', action: 'delete', description: 'Eliminar aportes' },
+  // Multas
+  { id: id(), resource: 'multas', action: 'read', description: 'Ver multas' },
+  { id: id(), resource: 'multas', action: 'create', description: 'Crear multas' },
+  { id: id(), resource: 'multas', action: 'update', description: 'Editar multas' },
+  { id: id(), resource: 'multas', action: 'delete', description: 'Eliminar multas' },
+  // Egresos
+  { id: id(), resource: 'egresos', action: 'read', description: 'Ver egresos' },
+  { id: id(), resource: 'egresos', action: 'create', description: 'Crear egresos' },
+  { id: id(), resource: 'egresos', action: 'update', description: 'Editar egresos' },
+  { id: id(), resource: 'egresos', action: 'delete', description: 'Eliminar egresos' },
+  // Reportes
+  { id: id(), resource: 'reportes', action: 'read', description: 'Ver reportes' },
+  { id: id(), resource: 'reportes', action: 'export', description: 'Exportar reportes' },
+  // Config
+  { id: id(), resource: 'config', action: 'read', description: 'Ver configuración' },
+  { id: id(), resource: 'config', action: 'update', description: 'Editar configuración' },
+  // Usuarios
+  { id: id(), resource: 'usuarios', action: 'read', description: 'Ver usuarios' },
+  { id: id(), resource: 'usuarios', action: 'create', description: 'Crear usuarios' },
+  { id: id(), resource: 'usuarios', action: 'update', description: 'Editar usuarios' },
+  { id: id(), resource: 'usuarios', action: 'delete', description: 'Eliminar usuarios' },
+  // Roles
+  { id: id(), resource: 'roles', action: 'read', description: 'Ver roles' },
+  { id: id(), resource: 'roles', action: 'manage', description: 'Gestionar roles' },
+  // Permisos
+  { id: id(), resource: 'permisos', action: 'read', description: 'Ver permisos' },
+  { id: id(), resource: 'permisos', action: 'manage', description: 'Gestionar permisos' },
+];
+
+// Role → Permission mapping (resource:action format)
+const ROLE_PERMISSIONS: Record<string, string[]> = {
+  admin: [
+    'socios:read', 'socios:create', 'socios:update', 'socios:delete',
+    'aportes:read', 'aportes:create', 'aportes:update', 'aportes:delete',
+    'multas:read', 'multas:create', 'multas:update', 'multas:delete',
+    'egresos:read', 'egresos:create', 'egresos:update', 'egresos:delete',
+    'reportes:read', 'reportes:export',
+    'config:read', 'config:update',
+    'usuarios:read', 'usuarios:create', 'usuarios:update', 'usuarios:delete',
+    'roles:read', 'roles:manage',
+    'permisos:read', 'permisos:manage',
+  ],
+  tesorero: [
+    'socios:read',
+    'aportes:read', 'aportes:create', 'aportes:update',
+    'multas:read', 'multas:create', 'multas:update',
+    'egresos:read', 'egresos:create', 'egresos:update',
+    'reportes:read', 'reportes:export',
+  ],
+  secretario: [
+    'socios:read', 'socios:create', 'socios:update',
+    'aportes:read',
+    'multas:read', 'multas:create',
+    'egresos:read',
+    'reportes:read',
+  ],
+  vocal: [
+    'socios:read',
+    'aportes:read',
+    'multas:read',
+    'reportes:read',
+  ],
+  socio: [
+    'socios:read',
+  ],
+};
+
+// Admin user for initial access
+const ADMIN_USER = {
+  id: id(),
+  email: 'admin@otb.com',
+  name: 'Administrador',
+  // Default password: admin123 (will be hashed on first run)
+  passwordHash: '$argon2id$v=19$m=65536,t=3,p=4$placeholder_hash_here',
+  emailVerified: true,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+};
+
 async function main() {
   console.log('Seeding database...');
   const start = Date.now();
 
   const tables = [
+    'email_verification_tokens',
+    'password_reset_tokens',
+    'refresh_tokens',
+    'role_permissions',
+    'user_roles',
+    'roles',
+    'permissions',
+    'users',
     'custom_field_values',
     'custom_field_definitions',
     'modules_config',
@@ -784,6 +896,39 @@ async function main() {
 
   db.insert(socioGrupos).values(socioGruposData).run();
   console.log(`  ${socioGruposData.length} membresías de grupo adicionales`);
+
+  // RBAC: roles, permissions, role_permissions, admin user
+  db.insert(roles).values(ROLES_DATA).run();
+  console.log(`  ${ROLES_DATA.length} roles`);
+
+  db.insert(permissions).values(PERMISSIONS_DATA).run();
+  console.log(`  ${PERMISSIONS_DATA.length} permisos`);
+
+  // Map role names to IDs for role_permissions
+  const roleIdByName = new Map(ROLES_DATA.map((r) => [r.name, r.id]));
+  const permIdByResourceAction = new Map(
+    PERMISSIONS_DATA.map((p) => [`${p.resource}:${p.action}`, p.id]),
+  );
+
+  const rolePermissionsData: (typeof schema.rolePermissions.$inferInsert)[] = [];
+  for (const [roleName, permKeys] of Object.entries(ROLE_PERMISSIONS)) {
+    const roleId = roleIdByName.get(roleName);
+    if (!roleId) continue;
+    for (const key of permKeys) {
+      const permId = permIdByResourceAction.get(key);
+      if (permId) {
+        rolePermissionsData.push({ roleId, permissionId: permId });
+      }
+    }
+  }
+  db.insert(rolePermissions).values(rolePermissionsData).run();
+  console.log(`  ${rolePermissionsData.length} role-permission assignments`);
+
+  // Admin user with placeholder hash (password: admin123)
+  db.insert(users).values([ADMIN_USER]).run();
+  // Assign admin role
+  db.insert(userRoles).values([{ userId: ADMIN_USER.id, roleId: roleIdByName.get('admin')! }]).run();
+  console.log(`  1 admin user (admin@otb.com / admin123)`);
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(2);
   console.log(`\nSeed complete in ${elapsed}s`);
