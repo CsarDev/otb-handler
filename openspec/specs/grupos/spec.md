@@ -6,7 +6,7 @@
 
 ## Description
 
-Introduces configurable groups (`grupos`) managed from Configuración, cloned from the activity-types pattern. Each socio has ONE primary group (`grupoPrimarioId` FK on `socios`, Option B) and any number of additional groups through the M:N join `socio_grupos` (socioId+grupoId composite PK). The invariant "primary ∉ additional" is enforced at the API layer on every socio write. Groups are deletable only when no socio references them (409 guard, checked on both primary and additional membership). Group filtering (`?grupoId=`) is available on the socio list, asistencia, aportes, multas and reportes.
+Introduces configurable groups (`grupos`) managed from Configuración, cloned from the activity-types pattern. Each socio has ONE primary group (`grupoPrimarioId` FK on `socios`, Option B) and any number of additional groups through the M:N join `socio_grupos` (socioId+grupoId composite PK). The invariant "primary ∉ additional" is enforced at the API layer on every socio write. Groups are deletable only when nothing references them: the 409 guard covers socio membership (primary FK and `socio_grupos` join) AND definition group-application rows (`aportes_definicion_grupos` — fixes the orphan-FK gap where a definition could pin a group that was then deleted). Group filtering (`?grupoId=`) is available on the socio list, asistencia, aportes, multas and reportes.
 
 ## Endpoints / Components
 
@@ -26,6 +26,8 @@ Introduces configurable groups (`grupos`) managed from Configuración, cloned fr
 ## Requirements
 
 ### Requirement: Group CRUD
+
+The system MUST expose full CRUD on `grupos` via the groups router (`/api/grupos`): `GET /`, `POST /`, `PUT /:id`, `DELETE /:id`. `POST` MUST validate `nombre` (non-empty string; descripcion optional/nullable). `PUT /:id` MUST update the group's editable fields. `DELETE /:id` MUST be guarded by 409 when the group is referenced by: (a) at least one socio's `grupoPrimarioId` (primary membership), (b) at least one `socio_grupos` join row (additional membership), OR (c) at least one `aportes_definicion_grupos` join row (a definition's group application). The group SHALL remain in the catalog on any 409.
 
 #### Scenario: Create a group
 
@@ -69,9 +71,18 @@ Introduces configurable groups (`grupos`) managed from Configuración, cloned fr
 - WHEN DELETE /api/grupos/<id>
 - THEN the response SHALL be 409
 
+#### Scenario: Delete a group referenced by an aporte definition join row is rejected
+
+- GIVEN a definition whose `grupoIds` includes "g1" (a row exists in `aportes_definicion_grupos` referencing g1)
+- AND no socio references g1 (no primary nor additional membership)
+- WHEN DELETE /api/grupos/g1
+- THEN the response SHALL be 409
+- AND the error SHALL indicate the group is referenced by an aporte definition
+- AND the group SHALL remain in the catalog (orphan-FK gap fixed)
+
 #### Scenario: Delete an unused group succeeds
 
-- GIVEN a group with no primary nor additional membership
+- GIVEN a group with no primary nor additional membership AND no `aportes_definicion_grupos` rows
 - WHEN DELETE /api/grupos/<id>
 - THEN the response SHALL be 200 with the full grupos list
 - AND the group SHALL no longer exist
@@ -176,5 +187,5 @@ Introduces configurable groups (`grupos`) managed from Configuración, cloned fr
 |------|-----------|------|
 | 400 | nombre missing, unknown group id, primary∈additional invariant violated | `{ "error": "..." }` |
 | 404 | Group/socio not found | `{ "error": "Not found" }` |
-| 409 | Group referenced by socios (primary or additional) | `{ "error": "Cannot delete: group has associated socios" }` |
+| 409 | Group referenced by socios (primary or additional) OR by an aporte definition join row (`aportes_definicion_grupos`) | `{ "error": "Cannot delete: group has associated socios" }` / `{ "error": "Cannot delete: group is referenced by an aporte definition" }` |
 | 500 | Internal DB error | `{ "error": "Internal server error" }` |

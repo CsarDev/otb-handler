@@ -4,6 +4,8 @@
 
 `reports`
 
+> **Delta** from `openspec/specs/reports/spec.md` (paginacion-avanzada): `GET /api/reportes/libro-diario` responde SIEMPRE con el envelope `{ items, total, page, pageSize }` (reemplaza el array plano) y acepta los query params `page`/`pageSize` (defaults 1/25, cap 100 vía `parsePaginacion`). `items` SHALL ordenarse determinísticamente por `fecha ASC, id DESC` (tiebreak: dentro de la misma fecha, id DESC). `total` es el COUNT de todas las filas que matchean los filtros existentes (fechaDesde/fechaHasta — default últimos 30 días —, estadoId, grupoId, gestion, mes, tipo) ANTES de la paginación. El consumidor es único e in-repo (reportes.tsx), actualizado en el mismo cambio. Balance y resumen-socio son UNCHANGED.
+
 > **Delta** from `openspec/specs/reports/spec.md`: socio-facing report endpoints MUST respect the state action catalog. `resumen-socio` requires the `reportes` action on the socio's estado (409 otherwise). `libro-diario` and `resumen-socio` support optional `estadoId`/`grupoId` filters (socio estado / group membership). Balance and existing aggregation behavior are unchanged.
 
 ## Description
@@ -45,6 +47,8 @@ Proveer tres endpoints de reportes contables agregados que permitan obtener bala
 
 ### Requirement: Libro Diario
 
+`GET /api/reportes/libro-diario` MUST aceptar los query params opcionales `page` y `pageSize` (defaults page=1, pageSize=25; pageSize SHALL clampearse a 100 si se provee un valor mayor; valores no numéricos o page < 1 SHALL caer a los defaults vía `parsePaginacion`) y SHALL responder SIEMPRE con el envelope `{ items, total, page, pageSize }`, donde `items` es el slice de la página, `total` es el COUNT de todas las filas que matchean los filtros existentes (fechaDesde/fechaHasta — default últimos 30 días —, estadoId, grupoId, gestion, mes, tipo) ANTES de la paginación, y `page`/`pageSize` hacen echo de los valores efectivos. `items` SHALL ordenarse determinísticamente: `fecha ASC, id DESC` (tiebreak dentro de la misma fecha). El envelope reemplaza el array plano de la versión anterior; el único consumidor (reportes.tsx) se actualiza en el mismo cambio.
+
 #### Scenario: Obtener libro diario con todos los movimientos en un rango de fechas
 
 - GIVEN el endpoint GET /api/reportes/libro-diario
@@ -77,6 +81,38 @@ Proveer tres endpoints de reportes contables agregados que permitan obtener bala
 - WHEN se invoca GET /api/reportes/libro-diario?grupoId=g1
 - THEN la respuesta SHALL incluir solo movimientos de s1
 - AND los filtros estadoId y grupoId SHALL poder combinarse
+
+#### Scenario: Libro diario devuelve la primera página con total
+
+- GIVEN existen 60 movimientos en el rango de fechas
+- WHEN GET /api/reportes/libro-diario
+- THEN la respuesta SHALL ser 200 con { items: [25 movimientos], total: 60, page: 1, pageSize: 25 }
+
+#### Scenario: pageSize mayor a 100 se clampea a 100
+
+- WHEN GET /api/reportes/libro-diario?pageSize=500
+- THEN la respuesta SHALL llevar pageSize=100 y a lo sumo 100 items
+
+#### Scenario: Los filtros se aplican antes de la paginación y total refleja el conteo filtrado
+
+- GIVEN movimientos de s1 (activo) y s2 (suspendido)
+- WHEN GET /api/reportes/libro-diario?estadoId=<suspendido-id>&pageSize=10
+- THEN items SHALL contener solo movimientos de s2
+- AND total SHALL ser el conteo de movimientos de s2 únicamente (antes de la paginación)
+
+#### Scenario: El orden es determinista entre páginas (sin duplicados ni huecos)
+
+- GIVEN 60 movimientos con fechas/ids distintos
+- WHEN GET /api/reportes/libro-diario?page=1 y GET /api/reportes/libro-diario?page=2 (pageSize=25)
+- THEN cada movimiento SHALL aparecer exactamente una vez entre ambas páginas
+- AND la página 1 SHALL contener los 25 movimientos con la fecha más antigua (fecha ASC)
+- AND dentro de la misma fecha, los ids SHALL ordenarse DESC
+
+#### Scenario: Lista vacía devuelve items [] y total 0
+
+- GIVEN ningún movimiento en el rango de fechas
+- WHEN GET /api/reportes/libro-diario
+- THEN la respuesta SHALL ser 200 con { items: [], total: 0, page: 1, pageSize: 25 }
 
 ### Requirement: Resumen por Socio
 
