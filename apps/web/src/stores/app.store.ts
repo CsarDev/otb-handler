@@ -77,6 +77,8 @@ type MultaFilters = {
   grupoId?: string;
 };
 type EgresoFilters = { categoria?: string; fechaDesde?: string; fechaHasta?: string };
+// D57: filtros de la lista paginada de socios (espejo de los query params de GET /api/socios).
+type SociosListaFilters = { search?: string; estadoId?: string; grupoId?: string };
 type LibroDiarioFilters = {
   fechaDesde?: string;
   fechaHasta?: string;
@@ -118,6 +120,19 @@ type AppState = {
   updateSocio: (id: string, data: Partial<SocioInput>) => Promise<SocioConGeneracion>;
   deleteSocio: (id: string) => Promise<void>;
   bajaSocio: (id: string, motivo: string) => Promise<Socio>;
+
+  // D57: slice NUEVO sociosLista (paginado, patrón D38/D47). sociosListaFilters es el
+  // snapshot D58 de filtros activos para el refetch post-mutación a página 1 (D41/R6).
+  sociosLista: Socio[];
+  sociosListaTotal: number;
+  sociosListaPage: number;
+  sociosListaPageSize: number;
+  sociosListaLoading: boolean;
+  sociosListaError: string | null;
+  sociosListaFilters: SociosListaFilters | undefined;
+  fetchSociosLista: (filters?: SociosListaFilters, page?: number) => Promise<void>;
+  setSociosListaPage: (page: number, filters?: SociosListaFilters) => Promise<void>;
+  setSociosListaPageSize: (pageSize: number, filters?: SociosListaFilters) => Promise<void>;
 
   aporteRegistros: AporteRegistro[];
   aporteRegistrosTotal: number;
@@ -247,7 +262,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (estadoId) params.set('estadoId', estadoId);
       if (grupoId) params.set('grupoId', grupoId);
       const qs = params.toString() ? `?${params}` : '';
-      const data = await request<Socio[]>(`/socios${qs}`);
+      // T3.4/D54: el catálogo plano vive en /socios/catalogo (el GET / ahora es envelope).
+      const data = await request<Socio[]>(`/socios/catalogo${qs}`);
       set({ socios: data, sociosLoading: false });
     } catch (e) {
       set({ sociosError: (e as Error).message, sociosLoading: false });
@@ -259,6 +275,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     // T3.1/D16: el guardado genera cobros; refrescar los registros para que
     // aparezcan de inmediato en la lista (la lista de socios ya se actualizó).
     void get().fetchAporteRegistros();
+    // D58/R6: refetch de la lista paginada a página 1 preservando los filtros activos (snapshot).
+    void get().fetchSociosLista(get().sociosListaFilters, 1);
     return socio;
   },
   updateSocio: async (id, data) => {
@@ -266,11 +284,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ socios: get().socios.map((s) => (s.id === id ? socio : s)) });
     // T3.1/D16: un PUT puede generar cobros (nuevas asignaciones/membresías).
     void get().fetchAporteRegistros();
+    // D58/R6: refetch de la lista paginada a página 1 preservando los filtros activos (snapshot).
+    void get().fetchSociosLista(get().sociosListaFilters, 1);
     return socio;
   },
   deleteSocio: async (id) => {
     await request(`/socios/${id}`, { method: 'DELETE' });
     set({ socios: get().socios.filter((s) => s.id !== id) });
+    // D58/R6: refetch de la lista paginada a página 1 preservando los filtros activos (snapshot).
+    void get().fetchSociosLista(get().sociosListaFilters, 1);
   },
   bajaSocio: async (id, motivo) => {
     const socio = await request<Socio>(`/socios/${id}/baja`, {
@@ -278,7 +300,57 @@ export const useAppStore = create<AppState>((set, get) => ({
       body: JSON.stringify({ motivo }),
     });
     set({ socios: get().socios.map((s) => (s.id === id ? socio : s)) });
+    // D58/R6: refetch de la lista paginada a página 1 preservando los filtros activos (snapshot).
+    void get().fetchSociosLista(get().sociosListaFilters, 1);
     return socio;
+  },
+
+  // ── slice NUEVO sociosLista (T3.1, patrón D38/D47 verbatim de fetchMultas/setMultasPage) ──
+  sociosLista: [],
+  sociosListaTotal: 0,
+  sociosListaPage: 1,
+  sociosListaPageSize: 25,
+  sociosListaLoading: false,
+  sociosListaError: null,
+  sociosListaFilters: undefined,
+  fetchSociosLista: async (filters, page) => {
+    set({ sociosListaLoading: true, sociosListaError: null });
+    try {
+      const params = new URLSearchParams();
+      if (filters?.search) params.set('search', filters.search);
+      if (filters?.estadoId) params.set('estadoId', filters.estadoId);
+      if (filters?.grupoId) params.set('grupoId', filters.grupoId);
+      // D38: SIEMPRE enviar page/pageSize (defaults del store 1/25, cap del API 100).
+      params.set('page', String(page ?? get().sociosListaPage));
+      params.set('pageSize', String(get().sociosListaPageSize));
+      const qs = params.toString() ? `?${params}` : '';
+      const data = await request<Paginated<Socio>>(`/socios${qs}`);
+      // D33: unpack del envelope — items→sociosLista, total→sociosListaTotal, echo de page/pageSize.
+      // D58: snapshot de filtros activos en cada fetch exitoso (refetch post-mutación a pág. 1).
+      set({
+        sociosLista: data.items,
+        sociosListaTotal: data.total,
+        sociosListaPage: data.page,
+        sociosListaPageSize: data.pageSize,
+        sociosListaLoading: false,
+        sociosListaFilters: filters,
+      });
+    } catch (e) {
+      set({ sociosListaError: (e as Error).message, sociosListaLoading: false });
+    }
+  },
+  setSociosListaPage: async (page, filters) => {
+    // D38: único punto de mutación de página — sirve TANTO al cambio de página
+    // (onPageChange) como al reset a página 1 ante un cambio de filtros.
+    set({ sociosListaPage: page });
+    return get().fetchSociosLista(filters, page);
+  },
+  setSociosListaPageSize: async (pageSize, filters) => {
+    // D47: clamp a las opciones canónicas, reset a página 1 y UN solo refetch.
+    // Los efectos de ruta (deps [tab, filters, setter]) no incluyen pageSize →
+    // sin doble fetch.
+    set({ sociosListaPageSize: clampPageSize(pageSize), sociosListaPage: 1 });
+    return get().fetchSociosLista(filters, 1);
   },
 
   aporteRegistros: [],
