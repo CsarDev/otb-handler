@@ -147,9 +147,14 @@ type AppState = {
   anularAporte: (id: string, razon: string) => Promise<AporteRegistro>;
 
   egresos: Egreso[];
+  egresosTotal: number;
+  egresosPage: number;
+  egresosPageSize: number;
   egresosLoading: boolean;
   egresosError: string | null;
-  fetchEgresos: (filters?: EgresoFilters) => Promise<void>;
+  fetchEgresos: (filters?: EgresoFilters, page?: number) => Promise<void>;
+  setEgresosPage: (page: number, filters?: EgresoFilters) => Promise<void>;
+  setEgresosPageSize: (pageSize: number, filters?: EgresoFilters) => Promise<void>;
   createEgreso: (data: Partial<Egreso>) => Promise<Egreso>;
   updateEgreso: (id: string, data: Partial<Egreso>) => Promise<Egreso>;
   deleteEgreso: (id: string) => Promise<void>;
@@ -416,36 +421,59 @@ export const useAppStore = create<AppState>((set, get) => ({
     return aporte;
   },
 
+  // ── slice egresos (T3.3, paginado en el MISMO slice; patrón D38/D47 verbatim) ──
   egresos: [],
+  egresosTotal: 0,
+  egresosPage: 1,
+  egresosPageSize: 25,
   egresosLoading: false,
   egresosError: null,
-  fetchEgresos: async (filters) => {
+  fetchEgresos: async (filters, page) => {
     set({ egresosLoading: true, egresosError: null });
     try {
       const params = new URLSearchParams();
       if (filters?.categoria) params.set('categoria', filters.categoria);
       if (filters?.fechaDesde) params.set('fechaDesde', filters.fechaDesde);
       if (filters?.fechaHasta) params.set('fechaHasta', filters.fechaHasta);
+      // D38: SIEMPRE enviar page/pageSize (defaults del store 1/25, cap del API 100).
+      params.set('page', String(page ?? get().egresosPage));
+      params.set('pageSize', String(get().egresosPageSize));
       const qs = params.toString() ? `?${params}` : '';
-      const data = await request<Egreso[]>(`/egresos${qs}`);
-      set({ egresos: data, egresosLoading: false });
+      const data = await request<Paginated<Egreso>>(`/egresos${qs}`);
+      // D33: unpack del envelope — items→egresos, total→egresosTotal, echo de page/pageSize.
+      set({
+        egresos: data.items,
+        egresosTotal: data.total,
+        egresosPage: data.page,
+        egresosPageSize: data.pageSize,
+        egresosLoading: false,
+      });
     } catch (e) {
       set({ egresosError: (e as Error).message, egresosLoading: false });
     }
   },
+  setEgresosPage: async (page, filters) => {
+    // D38: único punto de mutación de página — sirve TANTO al cambio de página
+    // (onPageChange) como al reset a página 1 ante un cambio de filtros.
+    set({ egresosPage: page });
+    return get().fetchEgresos(filters, page);
+  },
+  setEgresosPageSize: async (pageSize, filters) => {
+    // D47: clamp a las opciones canónicas, reset a página 1 y UN solo refetch.
+    set({ egresosPageSize: clampPageSize(pageSize), egresosPage: 1 });
+    return get().fetchEgresos(filters, 1);
+  },
   createEgreso: async (data) => {
-    const egreso = await request<Egreso>('/egresos', { method: 'POST', body: JSON.stringify(data) });
-    set({ egresos: [...get().egresos, egreso] });
-    return egreso;
+    // D58: mutaciones route-driven — devuelven la entidad y la RUTA refresca la lista
+    // vía setEgresosPage(1, mappedFilters). La lista NO se muta in-place (evita el
+    // prepend optimista de un egreso con fecha vieja en la página actual).
+    return request<Egreso>('/egresos', { method: 'POST', body: JSON.stringify(data) });
   },
   updateEgreso: async (id, data) => {
-    const egreso = await request<Egreso>(`/egresos/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-    set({ egresos: get().egresos.map((e) => (e.id === id ? egreso : e)) });
-    return egreso;
+    return request<Egreso>(`/egresos/${id}`, { method: 'PUT', body: JSON.stringify(data) });
   },
   deleteEgreso: async (id) => {
     await request(`/egresos/${id}`, { method: 'DELETE' });
-    set({ egresos: get().egresos.filter((e) => e.id !== id) });
   },
 
   actividades: [],
