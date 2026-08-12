@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
-import { eq, and, like, or, inArray, sql } from 'drizzle-orm';
+import { eq, and, like, or, inArray, sql, asc } from 'drizzle-orm';
 import type { Aporte, AporteInherited, Socio } from '@otb/core';
 import { cargarPermisosPorEstado, permite } from '../lib/permisos';
 import { generarAportes, definicionesPorIds, definicionesDeGrupos } from '../lib/aportes';
+import { parsePaginacion } from '../lib/paginacion';
 
 const socios = new Hono();
 
@@ -236,42 +237,78 @@ function definicionesFinales(
   return [...porId.values()];
 }
 
-socios.get('/', (c) => {
-  const search = c.req.query('search');
-  const estadoId = c.req.query('estadoId');
-  const grupoId = c.req.query('grupoId');
-
+// Filtros compartidos por GET /, su COUNT espejo y GET /catalogo (D52): un solo
+// WHERE builder. search LIKE (nombre OR apellidoPaterno), estadoId eq, grupoId
+// primario OR adicional (subquery `socio_grupos` sin multiplicar filas del join).
+function filtrosSocios(q: { search?: string; estadoId?: string; grupoId?: string }): any[] {
   const filters: any[] = [];
 
-  if (search) {
+  if (q.search) {
     filters.push(
       or(
-        like(schema.socios.nombre, `%${search}%`),
-        like(schema.socios.apellidoPaterno, `%${search}%`),
+        like(schema.socios.nombre, `%${q.search}%`),
+        like(schema.socios.apellidoPaterno, `%${q.search}%`),
       ),
     );
   }
-  if (estadoId) {
-    filters.push(eq(schema.socios.estadoId, estadoId));
+  if (q.estadoId) {
+    filters.push(eq(schema.socios.estadoId, q.estadoId));
   }
-  if (grupoId) {
+  if (q.grupoId) {
     // primario OR adicional (subquery evita multiplicación de filas del join)
     const subquery = db
       .select({ socioId: schema.socioGrupos.socioId })
       .from(schema.socioGrupos)
-      .where(eq(schema.socioGrupos.grupoId, grupoId));
-    filters.push(or(eq(schema.socios.grupoPrimarioId, grupoId), inArray(schema.socios.id, subquery)));
+      .where(eq(schema.socioGrupos.grupoId, q.grupoId));
+    filters.push(or(eq(schema.socios.grupoPrimarioId, q.grupoId), inArray(schema.socios.id, subquery)));
   }
 
-  const query = selectSociosConEstado();
-  const filas = filters.length ? query.where(and(...filters)).all() : query.all();
+  return filters;
+}
 
+// Enriquecimiento batch + armado FULL (R4): corre SOLO sobre las filas recibidas
+// (los ids de la página) — ~6 queries batch, sin N+1 y sin tocar el set completo.
+function armarSocios(filas: FilaSocio[]): Socio[] {
   const ids = filas.map((f) => f.id);
   const grupos = gruposPorSocio(ids);
   const directos = aportesDirectosPorSocio(ids);
   const inherited = aportesInheritedPorSocio(filas, grupos);
+  return filas.map((f) => armarSocio(f, grupos, directos.get(f.id) ?? [], inherited.get(f.id) ?? []));
+}
 
-  return c.json(filas.map((f) => armarSocio(f, grupos, directos.get(f.id) ?? [], inherited.get(f.id) ?? [])));
+socios.get('/', (c) => {
+  const { page, pageSize } = parsePaginacion(c.req.query());
+  const where = (f => (f.length ? and(...f) : undefined))(filtrosSocios(c.req.query()));
+
+  // COUNT espejo: MISMO FROM + LEFT JOIN estadosSocio + WHERE que items (D33/D52).
+  const total = db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.socios)
+    .leftJoin(schema.estadosSocio, eq(schema.socios.estadoId, schema.estadosSocio.id))
+    .where(where)
+    .get();
+
+  const filas = selectSociosConEstado()
+    .where(where)
+    .orderBy(asc(schema.socios.nombre), asc(schema.socios.apellidoPaterno), asc(schema.socios.id)) // D53
+    .limit(pageSize)
+    .offset((page - 1) * pageSize)
+    .all();
+
+  return c.json({ items: armarSocios(filas), total: Number(total?.n ?? 0), page, pageSize });
+});
+
+// Catálogo FULL (D54): array plano de TODOS los socios que matcheen los filtros
+// (o todos, sin filtros), mismo ORDER BY alfabético; IGNORA page/pageSize. Los
+// consumidores-selector (multas/aportes/asistencia/reportes, R5) iteran el array
+// completo para `<option>`/filtros → paginar aquí rompería esas páginas.
+socios.get('/catalogo', (c) => {
+  const where = (f => (f.length ? and(...f) : undefined))(filtrosSocios(c.req.query()));
+  const filas = selectSociosConEstado()
+    .where(where)
+    .orderBy(asc(schema.socios.nombre), asc(schema.socios.apellidoPaterno), asc(schema.socios.id))
+    .all();
+  return c.json(armarSocios(filas));
 });
 
 socios.get('/:id', (c) => {
