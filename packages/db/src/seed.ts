@@ -763,12 +763,12 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
 };
 
 // Admin user for initial access
+// Password: admin123 (pre-hashed with Argon2id)
 const ADMIN_USER = {
   id: id(),
   email: 'admin@otb.com',
   name: 'Administrador',
-  // Default password: admin123 (will be hashed on first run)
-  passwordHash: '$argon2id$v=19$m=65536,t=3,p=4$placeholder_hash_here',
+  passwordHash: '$argon2id$v=19$m=19456,t=2,p=1$BfxuO75FEdFIBclwPvziVQ$RKUqb2PduXu8VEPiMUnhMxc8CGl+XHURfY3hIZkKueE',
   emailVerified: true,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),

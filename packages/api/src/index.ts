@@ -16,6 +16,8 @@ import reportesRouter from './routes/reportes';
 import estadosSocioRouter from './routes/estados-socio';
 import accionesSocioRouter from './routes/acciones-socio';
 import gruposRouter from './routes/grupos';
+import authRouter from './routes/auth';
+import usersRouter from './routes/users';
 
 const api = new Hono();
 
@@ -38,6 +40,8 @@ api.route('/api/reportes', reportesRouter);
 api.route('/api/estados-socio', estadosSocioRouter);
 api.route('/api/acciones-socio', accionesSocioRouter);
 api.route('/api/grupos', gruposRouter);
+api.route('/api/auth', authRouter);
+api.route('/api/users', usersRouter);
 
 export default api;
 export type ApiApp = typeof api;

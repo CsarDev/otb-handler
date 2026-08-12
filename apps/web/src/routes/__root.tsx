@@ -1,5 +1,6 @@
-import { Link, Outlet, useLocation } from '@tanstack/react-router';
+import { Link, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
+import { useAuthStore } from '../stores/auth.store';
 
 const navItems = [
   { to: '/', label: 'Dashboard' } as const,
@@ -34,6 +35,13 @@ function NavLink({ to, label, onClick }: { to: string; label: string; onClick?: 
 
 export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { isAuthenticated, user, logout } = useAuthStore();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate({ to: '/login' });
+  };
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -55,6 +63,9 @@ export function Layout() {
           {navItems.map((item) => (
             <NavLink key={item.to} to={item.to} label={item.label} onClick={() => setSidebarOpen(false)} />
           ))}
+          {isAuthenticated && (
+            <NavLink to="/users" label="Usuarios" onClick={() => setSidebarOpen(false)} />
+          )}
         </nav>
       </aside>
 
@@ -66,16 +77,38 @@ export function Layout() {
       )}
 
       <div className="flex flex-1 flex-col">
-        <header className="flex h-16 items-center gap-4 border-b bg-white px-6">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="text-gray-500 hover:text-gray-700 lg:hidden"
-          >
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-          <h2 className="text-sm font-medium text-gray-500">Sistema de Gestión OTB</h2>
+        <header className="flex h-16 items-center justify-between border-b bg-white px-6">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="text-gray-500 hover:text-gray-700 lg:hidden"
+            >
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <h2 className="text-sm font-medium text-gray-500">Sistema de Gestión OTB</h2>
+          </div>
+          <div className="flex items-center gap-4">
+            {isAuthenticated ? (
+              <>
+                <span className="text-sm text-gray-600">{user?.name}</span>
+                <button
+                  onClick={handleLogout}
+                  className="rounded-md bg-red-50 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-100"
+                >
+                  Cerrar sesión
+                </button>
+              </>
+            ) : (
+              <Link
+                to="/login"
+                className="rounded-md bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-100"
+              >
+                Iniciar sesión
+              </Link>
+            )}
+          </div>
         </header>
         <main className="flex-1 overflow-auto p-6">
           <Outlet />

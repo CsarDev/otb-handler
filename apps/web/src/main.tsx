@@ -29,6 +29,7 @@ import { LoginPage } from './routes/login';
 import { RegisterPage } from './routes/register';
 import { ForgotPasswordPage } from './routes/forgot-password';
 import { ResetPasswordPage } from './routes/reset-password';
+import { UsersPage } from './routes/users';
 
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: DashboardPage });
 const sociosRoute = createRoute({ getParentRoute: () => rootRoute, path: '/socios', component: SociosPage });
@@ -43,6 +44,7 @@ const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: '/login'
 const registerRoute = createRoute({ getParentRoute: () => rootRoute, path: '/register', component: RegisterPage });
 const forgotPasswordRoute = createRoute({ getParentRoute: () => rootRoute, path: '/forgot-password', component: ForgotPasswordPage });
 const resetPasswordRoute = createRoute({ getParentRoute: () => rootRoute, path: '/reset-password', component: ResetPasswordPage });
+const usersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/users', component: UsersPage });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -58,6 +60,7 @@ const routeTree = rootRoute.addChildren([
   registerRoute,
   forgotPasswordRoute,
   resetPasswordRoute,
+  usersRoute,
 ]);
 
 const router = createRouter({ routeTree });
