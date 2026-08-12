@@ -3,6 +3,8 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useAppStore } from '../stores/app.store';
+import { useAuthStore } from '../stores/auth.store';
+import { usePermission } from '../hooks/usePermission';
 import { Badge } from '@otb/ui';
 import type { TipoActividad, EstadoSocio, Grupo } from '@otb/core';
 
@@ -131,6 +133,17 @@ export default function ConfigPage() {
   const [grupoForm, setGrupoForm] = useState({ nombre: '', descripcion: '' });
   const [grupoFormError, setGrupoFormError] = useState<string | null>(null);
 
+  // Usuarios y Roles (RBAC)
+  const { accessToken } = useAuthStore();
+  const { hasPermission } = usePermission();
+  const [usersList, setUsersList] = useState<Array<{ id: string; email: string; name: string; emailVerified: boolean; createdAt: string }>>([]);
+  const [rolesList, setRolesList] = useState<Array<{ id: string; name: string; description: string | null }>>([]);
+  const [permissionsList, setPermissionsList] = useState<Array<{ id: string; resource: string; action: string; description: string | null }>>([]);
+  const [userRoles, setUserRoles] = useState<Record<string, string>>({});
+  const [loadingRbac, setLoadingRbac] = useState(true);
+  const [editingUserRole, setEditingUserRole] = useState<string | null>(null);
+  const [selectedRoleId, setSelectedRoleId] = useState('');
+
   const configForm = useForm<ConfigForm>({
     resolver: zodResolver(configSchema) as any,
     defaultValues: defaultConfig,
@@ -144,6 +157,54 @@ export default function ConfigPage() {
   useEffect(() => {
     fetchConfig();
   }, [fetchConfig]);
+
+  // Fetch RBAC data
+  useEffect(() => {
+    if (!accessToken || !hasPermission('usuarios:read')) return;
+
+    const fetchRbacData = async () => {
+      try {
+        const [usersRes, rolesRes, permsRes] = await Promise.all([
+          fetch('/api/users', { headers: { Authorization: `Bearer ${accessToken}` } }),
+          fetch('/api/users/roles', { headers: { Authorization: `Bearer ${accessToken}` } }),
+          fetch('/api/users/permissions', { headers: { Authorization: `Bearer ${accessToken}` } }),
+        ]);
+
+        if (usersRes.ok) {
+          const data = await usersRes.json();
+          setUsersList(data.users || []);
+        }
+        if (rolesRes.ok) {
+          const data = await rolesRes.json();
+          setRolesList(data.roles || []);
+        }
+        if (permsRes.ok) {
+          const data = await permsRes.json();
+          setPermissionsList(data.permissions || []);
+        }
+
+        // Fetch user roles for each user
+        const usersData = usersRes.ok ? (await usersRes.json()).users : [];
+        const rolesMap: Record<string, string> = {};
+        for (const u of usersData) {
+          const roleRes = await fetch(`/api/users/${u.id}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+          if (roleRes.ok) {
+            const roleData = await roleRes.json();
+            if (roleData.user?.roles?.[0]) {
+              rolesMap[u.id] = roleData.user.roles[0].id;
+            }
+          }
+        }
+        setUserRoles(rolesMap);
+      } catch {
+        // Error loading RBAC data
+      } finally {
+        setLoadingRbac(false);
+      }
+    };
+
+    fetchRbacData();
+  }, [accessToken, hasPermission]);
 
   useEffect(() => {
     if (config) {
@@ -384,6 +445,44 @@ export default function ConfigPage() {
       } else {
         alert((e as Error).message);
       }
+    }
+  }
+
+  /* ── Usuarios y Roles (RBAC) ─────────────────────────────────── */
+
+  async function handleUpdateUserRole(userId: string, roleId: string) {
+    try {
+      const res = await fetch(`/api/users/${userId}/role`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ roleId }),
+      });
+
+      if (res.ok) {
+        setUserRoles((prev) => ({ ...prev, [userId]: roleId }));
+        setEditingUserRole(null);
+      }
+    } catch {
+      alert('Error al actualizar rol');
+    }
+  }
+
+  async function handleDeleteUser(userId: string, userName: string) {
+    if (!confirm(`¿Eliminar el usuario "${userName}"?`)) return;
+    try {
+      const res = await fetch(`/api/users/${userId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (res.ok) {
+        setUsersList((prev) => prev.filter((u) => u.id !== userId));
+      }
+    } catch {
+      alert('Error al eliminar usuario');
     }
   }
 
@@ -903,6 +1002,152 @@ export default function ConfigPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Usuarios y Roles (RBAC) ── */}
+      {hasPermission('usuarios:read') && (
+        <div className="rounded-xl border bg-white p-6 shadow-sm">
+          <h3 className="mb-4 text-lg font-semibold text-gray-900">Usuarios y Roles</h3>
+
+          {loadingRbac ? (
+            <p className="text-sm text-gray-500">Cargando usuarios...</p>
+          ) : (
+            <>
+              {/* Lista de Usuarios */}
+              <div className="mb-6">
+                <h4 className="mb-3 text-sm font-medium text-gray-700">Usuarios</h4>
+                {usersList.length === 0 ? (
+                  <p className="text-sm text-gray-500">No hay usuarios registrados</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Nombre</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Email</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Rol</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {usersList.map((u) => (
+                          <tr key={u.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-2 text-sm text-gray-900">{u.name}</td>
+                            <td className="px-4 py-2 text-sm text-gray-500">{u.email}</td>
+                            <td className="px-4 py-2 text-sm">
+                              {editingUserRole === u.id ? (
+                                <div className="flex items-center gap-2">
+                                  <select
+                                    value={selectedRoleId}
+                                    onChange={(e) => setSelectedRoleId(e.target.value)}
+                                    className="rounded border border-gray-300 px-2 py-1 text-xs"
+                                  >
+                                    {rolesList.map((r) => (
+                                      <option key={r.id} value={r.id}>{r.name}</option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    onClick={() => handleUpdateUserRole(u.id, selectedRoleId)}
+                                    className="rounded bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700"
+                                  >
+                                    Guardar
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingUserRole(null)}
+                                    className="rounded bg-gray-200 px-2 py-1 text-xs text-gray-700 hover:bg-gray-300"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="blue">
+                                    {rolesList.find((r) => r.id === userRoles[u.id])?.name || 'Sin rol'}
+                                  </Badge>
+                                  {hasPermission('usuarios:update') && (
+                                    <button
+                                      onClick={() => {
+                                        setEditingUserRole(u.id);
+                                        setSelectedRoleId(userRoles[u.id] || '');
+                                      }}
+                                      className="text-xs text-blue-600 hover:text-blue-800"
+                                    >
+                                      Cambiar
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-sm">
+                              {hasPermission('usuarios:delete') && (
+                                <button
+                                  onClick={() => handleDeleteUser(u.id, u.name)}
+                                  className="text-xs text-red-600 hover:text-red-800"
+                                >
+                                  Eliminar
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Lista de Roles */}
+              <div className="mb-6">
+                <h4 className="mb-3 text-sm font-medium text-gray-700">Roles</h4>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {rolesList.map((role) => (
+                    <div key={role.id} className="rounded-lg border bg-gray-50 p-4">
+                      <div className="flex items-center justify-between">
+                        <h5 className="font-medium text-gray-900">{role.name}</h5>
+                        <Badge variant="blue">
+                          {permissionsList.filter((p) => {
+                            // Count permissions for this role (simplified)
+                            return true;
+                          }).length}
+                        </Badge>
+                      </div>
+                      {role.description && (
+                        <p className="mt-1 text-xs text-gray-500">{role.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Lista de Permisos */}
+              {hasPermission('permisos:read') && (
+                <div>
+                  <h4 className="mb-3 text-sm font-medium text-gray-700">Permisos</h4>
+                  <div className="overflow-x-auto rounded-lg border">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Recurso</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Acción</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Descripción</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {permissionsList.map((perm) => (
+                          <tr key={perm.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-2 text-sm font-medium text-gray-900">{perm.resource}</td>
+                            <td className="px-4 py-2 text-sm text-gray-500">{perm.action}</td>
+                            <td className="px-4 py-2 text-sm text-gray-500">{perm.description || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 

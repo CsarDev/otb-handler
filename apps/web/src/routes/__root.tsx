@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/auth.store';
 
 const navItems = [
@@ -37,11 +37,39 @@ export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { isAuthenticated, user, logout } = useAuthStore();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Redirect to login if not authenticated (except for auth pages)
+  useEffect(() => {
+    const publicPaths = ['/login', '/register', '/forgot-password', '/reset-password'];
+    const isPublicPath = publicPaths.some((p) => location.pathname.startsWith(p));
+
+    if (!isAuthenticated && !isPublicPath) {
+      navigate({ to: '/login' });
+    }
+  }, [isAuthenticated, location.pathname, navigate]);
 
   const handleLogout = async () => {
     await logout();
     navigate({ to: '/login' });
   };
+
+  // Don't render layout for public pages
+  const publicPaths = ['/login', '/register', '/forgot-password', '/reset-password'];
+  const isPublicPath = publicPaths.some((p) => location.pathname.startsWith(p));
+
+  if (isPublicPath) {
+    return <Outlet />;
+  }
+
+  // Show loading if not authenticated yet
+  if (!isAuthenticated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -63,9 +91,6 @@ export function Layout() {
           {navItems.map((item) => (
             <NavLink key={item.to} to={item.to} label={item.label} onClick={() => setSidebarOpen(false)} />
           ))}
-          {isAuthenticated && (
-            <NavLink to="/users" label="Usuarios" onClick={() => setSidebarOpen(false)} />
-          )}
         </nav>
       </aside>
 
@@ -90,24 +115,13 @@ export function Layout() {
             <h2 className="text-sm font-medium text-gray-500">Sistema de Gestión OTB</h2>
           </div>
           <div className="flex items-center gap-4">
-            {isAuthenticated ? (
-              <>
-                <span className="text-sm text-gray-600">{user?.name}</span>
-                <button
-                  onClick={handleLogout}
-                  className="rounded-md bg-red-50 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-100"
-                >
-                  Cerrar sesión
-                </button>
-              </>
-            ) : (
-              <Link
-                to="/login"
-                className="rounded-md bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-100"
-              >
-                Iniciar sesión
-              </Link>
-            )}
+            <span className="text-sm text-gray-600">{user?.name}</span>
+            <button
+              onClick={handleLogout}
+              className="rounded-md bg-red-50 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-100"
+            >
+              Cerrar sesión
+            </button>
           </div>
         </header>
         <main className="flex-1 overflow-auto p-6">
