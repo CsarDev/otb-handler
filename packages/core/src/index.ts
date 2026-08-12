@@ -373,3 +373,56 @@ export function socioPermite(
 ): boolean {
   return clavesPermitidas.has(accionClave);
 }
+
+// RBAC Types
+export type User = {
+  id: string;
+  email: string;
+  name: string;
+  roleId: string;
+  emailVerified: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Role = {
+  id: string;
+  name: string;
+  description: string | null;
+  permissions: Permission[];
+};
+
+export type Permission = {
+  id: string;
+  resource: string;
+  action: string;
+  description: string | null;
+};
+
+export type Session = {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  familyId: string;
+  expiresAt: string;
+  createdAt: string;
+};
+
+export type AuthPayload = {
+  sub: string;
+  email: string;
+  roleId: string;
+  permissions: string[];
+  iat: number;
+  exp: number;
+};
+
+export type UserRole = {
+  userId: string;
+  roleId: string;
+};
+
+export type RolePermission = {
+  roleId: string;
+  permissionId: string;
+};

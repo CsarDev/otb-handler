@@ -15,3 +15,4 @@ export * from './schema/acciones-socio';
 export * from './schema/estado-acciones';
 export * from './schema/grupos';
 export * from './schema/socio-grupos';
+export * from './schema/users';
