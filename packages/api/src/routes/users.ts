@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { db, schema } from '@otb/db';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { authMiddleware, requirePermission } from '../middleware/auth';
 
 const users = new Hono();
@@ -24,6 +24,34 @@ users.get('/', requirePermission('usuarios', 'read'), async (c) => {
       .all();
 
     return c.json({ users: allUsers });
+  } catch (error) {
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// Get all roles
+users.get('/roles', requirePermission('roles', 'read'), async (c) => {
+  try {
+    const roles = await db
+      .select()
+      .from(schema.roles)
+      .all();
+
+    return c.json({ roles });
+  } catch (error) {
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// Get all permissions
+users.get('/permissions', requirePermission('permisos', 'read'), async (c) => {
+  try {
+    const permissions = await db
+      .select()
+      .from(schema.permissions)
+      .all();
+
+    return c.json({ permissions });
   } catch (error) {
     return c.json({ error: 'Internal server error' }, 500);
   }
@@ -62,7 +90,7 @@ users.get('/:id', requirePermission('usuarios', 'read'), async (c) => {
       ? await db
           .select()
           .from(schema.roles)
-          .where(eq(schema.roles.id, roleIds[0])) // TODO: use inArray
+          .where(inArray(schema.roles.id, roleIds))
           .all()
       : [];
 
@@ -146,34 +174,6 @@ users.delete('/:id', requirePermission('usuarios', 'delete'), async (c) => {
       .where(eq(schema.users.id, id));
 
     return c.json({ message: 'User deleted successfully' });
-  } catch (error) {
-    return c.json({ error: 'Internal server error' }, 500);
-  }
-});
-
-// Get all roles
-users.get('/roles', requirePermission('roles', 'read'), async (c) => {
-  try {
-    const roles = await db
-      .select()
-      .from(schema.roles)
-      .all();
-
-    return c.json({ roles });
-  } catch (error) {
-    return c.json({ error: 'Internal server error' }, 500);
-  }
-});
-
-// Get all permissions
-users.get('/permissions', requirePermission('permisos', 'read'), async (c) => {
-  try {
-    const permissions = await db
-      .select()
-      .from(schema.permissions)
-      .all();
-
-    return c.json({ permissions });
   } catch (error) {
     return c.json({ error: 'Internal server error' }, 500);
   }

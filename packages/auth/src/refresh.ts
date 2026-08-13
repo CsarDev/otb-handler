@@ -1,10 +1,11 @@
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { db, schema } from '@otb/db';
-import { eq, and, lt } from 'drizzle-orm';
+import { eq, and, gt } from 'drizzle-orm';
 
 export type RefreshTokenResult = {
   id: string;
   userId: string;
+  token: string;
   tokenHash: string;
   familyId: string;
   expiresAt: Date;
@@ -15,8 +16,6 @@ export function generateRefreshToken(): string {
 }
 
 export function hashRefreshToken(token: string): string {
-  // Simple SHA-256 hash for refresh tokens
-  const { createHash } = require('crypto');
   return createHash('sha256').update(token).digest('hex');
 }
 
@@ -39,7 +38,7 @@ export async function createRefreshToken(
     createdAt: new Date().toISOString(),
   });
 
-  return { id, userId, tokenHash, familyId: family, expiresAt };
+  return { id, userId, token, tokenHash, familyId: family, expiresAt };
 }
 
 export async function verifyRefreshToken(
@@ -53,7 +52,7 @@ export async function verifyRefreshToken(
     .where(
       and(
         eq(schema.refreshTokens.tokenHash, tokenHash),
-        lt(schema.refreshTokens.expiresAt, new Date().toISOString()),
+        gt(schema.refreshTokens.expiresAt, new Date().toISOString()),
       ),
     )
     .get();

@@ -12,6 +12,7 @@ import {
 } from '@otb/auth';
 import { authMiddleware } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
+import { logger } from '@otb/logger';
 
 const auth = new Hono();
 
@@ -81,6 +82,7 @@ auth.post('/login', loginLimiter, async (c) => {
     if (error instanceof Error && error.message === 'Invalid credentials') {
       return c.json({ error: 'Invalid credentials' }, 401);
     }
+    logger.error({ err: error }, 'Login failed');
     return c.json({ error: 'Internal server error' }, 500);
   }
 });

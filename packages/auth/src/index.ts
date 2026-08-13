@@ -2,7 +2,7 @@ import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
 import { randomUUID } from 'crypto';
 import { logger } from '@otb/logger';
 import { db, schema } from '@otb/db';
-import { eq, and, lt } from 'drizzle-orm';
+import { eq, and, lt, inArray } from 'drizzle-orm';
 import { hashPassword, verifyPassword } from './password';
 import {
   createRefreshToken,
@@ -57,11 +57,7 @@ export async function getUserPermissions(userId: string): Promise<string[]> {
   const rolePermissions = await db
     .select({ permissionId: schema.rolePermissions.permissionId })
     .from(schema.rolePermissions)
-    .where(
-      roleIds.length === 1
-        ? eq(schema.rolePermissions.roleId, roleIds[0])
-        : undefined, // TODO: use inArray for multiple roles
-    )
+    .where(inArray(schema.rolePermissions.roleId, roleIds))
     .all();
 
   const permissionIds = rolePermissions.map((rp) => rp.permissionId);
@@ -70,11 +66,7 @@ export async function getUserPermissions(userId: string): Promise<string[]> {
   const perms = await db
     .select()
     .from(schema.permissions)
-    .where(
-      permissionIds.length === 1
-        ? eq(schema.permissions.id, permissionIds[0])
-        : undefined, // TODO: use inArray
-    )
+    .where(inArray(schema.permissions.id, permissionIds))
     .all();
 
   return perms.map((p) => `${p.resource}:${p.action}`);
@@ -222,7 +214,7 @@ export async function login(
   return {
     user: { id: user.id, email: user.email, name: user.name },
     accessToken,
-    refreshToken: refreshTokenResult.id, // This is the token ID, not the actual token
+    refreshToken: refreshTokenResult.token, // This is the actual token to store in the cookie
   };
 }
 
@@ -273,7 +265,7 @@ export async function refresh(
 
   return {
     accessToken,
-    refreshToken: result.id,
+    refreshToken: result.token,
   };
 }
 
