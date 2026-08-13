@@ -5,7 +5,8 @@ export function usePermission() {
 
   const hasPermission = (permission: string) => {
     if (!user) return false;
-    return user.permissions.includes(permission) || user.permissions.includes(`${permission.split(':')[0]}:manage`);
+    const permissions = user.permissions ?? [];
+    return permissions.includes(permission) || permissions.includes(`${permission.split(':')[0]}:manage`);
   };
 
   const hasAnyPermission = (...permissions: string[]) => {

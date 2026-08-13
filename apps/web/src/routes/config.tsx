@@ -170,9 +170,9 @@ export default function ConfigPage() {
           fetch('/api/users/permissions', { headers: { Authorization: `Bearer ${accessToken}` } }),
         ]);
 
+        const usersData = usersRes.ok ? (await usersRes.json()).users ?? [] : [];
         if (usersRes.ok) {
-          const data = await usersRes.json();
-          setUsersList(data.users || []);
+          setUsersList(usersData);
         }
         if (rolesRes.ok) {
           const data = await rolesRes.json();
@@ -184,7 +184,6 @@ export default function ConfigPage() {
         }
 
         // Fetch user roles for each user
-        const usersData = usersRes.ok ? (await usersRes.json()).users : [];
         const rolesMap: Record<string, string> = {};
         for (const u of usersData) {
           const roleRes = await fetch(`/api/users/${u.id}`, { headers: { Authorization: `Bearer ${accessToken}` } });

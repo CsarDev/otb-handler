@@ -76,7 +76,10 @@ export async function register(
   email: string,
   password: string,
   name: string,
-): Promise<{ user: { id: string; email: string; name: string }; accessToken: string }> {
+): Promise<{
+  user: { id: string; email: string; name: string; roleId: string; permissions: string[] };
+  accessToken: string;
+}> {
   // Check if email already exists
   const existing = await db
     .select()
@@ -158,7 +161,13 @@ export async function register(
   logger.info({ userId, email }, 'User registered');
 
   return {
-    user: { id: userId, email: email.toLowerCase(), name },
+    user: {
+      id: userId,
+      email: email.toLowerCase(),
+      name,
+      roleId: defaultRole.id,
+      permissions,
+    },
     accessToken,
   };
 }
@@ -166,7 +175,11 @@ export async function register(
 export async function login(
   email: string,
   password: string,
-): Promise<{ user: { id: string; email: string; name: string }; accessToken: string; refreshToken: string }> {
+): Promise<{
+  user: { id: string; email: string; name: string; roleId: string; permissions: string[] };
+  accessToken: string;
+  refreshToken: string;
+}> {
   // Find user
   const user = await db
     .select()
@@ -212,7 +225,13 @@ export async function login(
   logger.info({ userId: user.id, email }, 'User logged in');
 
   return {
-    user: { id: user.id, email: user.email, name: user.name },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      roleId: userRole.roleId,
+      permissions,
+    },
     accessToken,
     refreshToken: refreshTokenResult.token, // This is the actual token to store in the cookie
   };
