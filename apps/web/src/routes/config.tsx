@@ -137,12 +137,15 @@ export default function ConfigPage() {
   const { accessToken } = useAuthStore();
   const { hasPermission } = usePermission();
   const [usersList, setUsersList] = useState<Array<{ id: string; email: string; name: string; emailVerified: boolean; createdAt: string }>>([]);
-  const [rolesList, setRolesList] = useState<Array<{ id: string; name: string; description: string | null }>>([]);
+  const [rolesList, setRolesList] = useState<Array<{ id: string; name: string; description: string | null; permissionIds: string[] }>>([]);
   const [permissionsList, setPermissionsList] = useState<Array<{ id: string; resource: string; action: string; description: string | null }>>([]);
   const [userRoles, setUserRoles] = useState<Record<string, string>>({});
   const [loadingRbac, setLoadingRbac] = useState(true);
   const [editingUserRole, setEditingUserRole] = useState<string | null>(null);
   const [selectedRoleId, setSelectedRoleId] = useState('');
+  const [editingRole, setEditingRole] = useState<{ id: string; name: string; description: string | null; permissionIds: string[] } | null>(null);
+  const [roleFormError, setRoleFormError] = useState<string | null>(null);
+  const [roleSaving, setRoleSaving] = useState(false);
 
   const configForm = useForm<ConfigForm>({
     resolver: zodResolver(configSchema) as any,
@@ -479,9 +482,120 @@ export default function ConfigPage() {
 
       if (res.ok) {
         setUsersList((prev) => prev.filter((u) => u.id !== userId));
+      } else {
+        const body = await res.json().catch(() => ({}));
+        alert(body.error || 'Error al eliminar usuario');
       }
     } catch {
       alert('Error al eliminar usuario');
+    }
+  }
+
+  async function fetchRoles() {
+    const res = await fetch('/api/users/roles', { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (res.ok) {
+      const data = await res.json();
+      setRolesList(data.roles || []);
+    }
+  }
+
+  function openRoleCreate() {
+    setEditingRole({ id: '', name: '', description: '', permissionIds: [] });
+    setRoleFormError(null);
+  }
+
+  function openRoleEdit(role: { id: string; name: string; description: string | null; permissionIds: string[] }) {
+    setEditingRole({ id: role.id, name: role.name, description: role.description ?? '', permissionIds: [...role.permissionIds] });
+    setRoleFormError(null);
+  }
+
+  function toggleRolePermission(permissionId: string) {
+    setEditingRole((prev) =>
+      prev
+        ? {
+            ...prev,
+            permissionIds: prev.permissionIds.includes(permissionId)
+              ? prev.permissionIds.filter((id) => id !== permissionId)
+              : [...prev.permissionIds, permissionId],
+          }
+        : prev,
+    );
+  }
+
+  async function handleSaveRole() {
+    if (!editingRole) return;
+    if (!editingRole.name.trim()) {
+      setRoleFormError('El nombre es requerido');
+      return;
+    }
+    setRoleFormError(null);
+    setRoleSaving(true);
+    try {
+      const body = {
+        name: editingRole.name.trim(),
+        description: (editingRole.description ?? '').trim() || null,
+        permissionIds: editingRole.permissionIds,
+      };
+      const url = editingRole.id ? `/api/users/roles/${editingRole.id}` : '/api/users/roles';
+      const method = editingRole.id ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(editingRole.id ? { name: body.name, description: body.description } : body),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        setRoleFormError(errBody.error || 'Error al guardar rol');
+        return;
+      }
+
+      if (editingRole.id) {
+        // Update permissions after role update
+        const permRes = await fetch(`/api/users/roles/${editingRole.id}/permissions`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ permissionIds: body.permissionIds }),
+        });
+        if (!permRes.ok) {
+          const errBody = await permRes.json().catch(() => ({}));
+          setRoleFormError(errBody.error || 'Error al guardar permisos del rol');
+          return;
+        }
+      }
+
+      setEditingRole(null);
+      await fetchRoles();
+    } catch {
+      setRoleFormError('Error al guardar rol');
+    } finally {
+      setRoleSaving(false);
+    }
+  }
+
+  async function handleDeleteRole(role: { id: string; name: string }) {
+    if (!confirm(`¿Eliminar el rol "${role.name}"?`)) return;
+    try {
+      const res = await fetch(`/api/users/roles/${role.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (res.ok) {
+        await fetchRoles();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        alert(body.error || 'Error al eliminar rol');
+      }
+    } catch {
+      alert('Error al eliminar rol');
     }
   }
 
@@ -1098,21 +1212,44 @@ export default function ConfigPage() {
 
               {/* Lista de Roles */}
               <div className="mb-6">
-                <h4 className="mb-3 text-sm font-medium text-gray-700">Roles</h4>
+                <div className="mb-3 flex items-center justify-between">
+                  <h4 className="text-sm font-medium text-gray-700">Roles</h4>
+                  {hasPermission('roles:manage') && (
+                    <button
+                      onClick={openRoleCreate}
+                      className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                    >
+                      + Nuevo Rol
+                    </button>
+                  )}
+                </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {rolesList.map((role) => (
                     <div key={role.id} className="rounded-lg border bg-gray-50 p-4">
                       <div className="flex items-center justify-between">
                         <h5 className="font-medium text-gray-900">{role.name}</h5>
-                        <Badge variant="blue">
-                          {permissionsList.filter((p) => {
-                            // Count permissions for this role (simplified)
-                            return true;
-                          }).length}
-                        </Badge>
+                        <Badge variant="blue">{role.permissionIds?.length ?? 0} accesos</Badge>
                       </div>
                       {role.description && (
                         <p className="mt-1 text-xs text-gray-500">{role.description}</p>
+                      )}
+                      {hasPermission('roles:manage') && (
+                        <div className="mt-3 flex gap-3 border-t border-gray-200 pt-2">
+                          <button
+                            onClick={() => openRoleEdit(role)}
+                            className="text-xs font-medium text-blue-600 hover:text-blue-800"
+                          >
+                            Editar
+                          </button>
+                          {role.name !== 'admin' && (
+                            <button
+                              onClick={() => handleDeleteRole(role)}
+                              className="text-xs font-medium text-red-600 hover:text-red-800"
+                            >
+                              Eliminar
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                   ))}
@@ -1147,6 +1284,92 @@ export default function ConfigPage() {
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* ── Modal Rol ── */}
+      {editingRole && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-bold text-gray-900">
+              {editingRole.id ? `Editar rol: ${editingRole.name}` : 'Nuevo Rol'}
+            </h3>
+
+            {roleFormError && (
+              <p className="mb-3 rounded-lg bg-red-50 p-2 text-xs text-red-600">{roleFormError}</p>
+            )}
+
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={labelCls}>Nombre *</label>
+                  <input
+                    value={editingRole.name}
+                    onChange={(e) => setEditingRole((p) => (p ? { ...p, name: e.target.value } : p))}
+                    disabled={editingRole.id === 'admin' || editingRole.name === 'admin'}
+                    placeholder="ej. tesorero"
+                    className={`${inputCls} ${editingRole.name === 'admin' ? 'opacity-50' : ''}`}
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>Descripción</label>
+                  <input
+                    value={editingRole.description ?? ''}
+                    onChange={(e) => setEditingRole((p) => (p ? { ...p, description: e.target.value } : p))}
+                    placeholder="Descripción del rol"
+                    className={inputCls}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">Accesos (permisos)</label>
+                <div className="max-h-80 overflow-y-auto rounded-lg border bg-gray-50 p-3">
+                  {permissionsList.length === 0 && (
+                    <p className="text-xs text-gray-500">No hay permisos configurados</p>
+                  )}
+                  {Array.from(
+                    new Set(permissionsList.map((p) => p.resource)),
+                  ).map((resource) => (
+                    <div key={resource} className="mb-3">
+                      <p className="mb-1 text-xs font-semibold uppercase text-gray-500">{resource}</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        {permissionsList
+                          .filter((p) => p.resource === resource)
+                          .map((p) => (
+                            <label key={p.id} className="flex cursor-pointer items-center gap-1.5 text-sm text-gray-700">
+                              <input
+                                type="checkbox"
+                                checked={editingRole.permissionIds.includes(p.id)}
+                                onChange={() => toggleRolePermission(p.id)}
+                                className="rounded border-gray-300"
+                              />
+                              {p.action}
+                            </label>
+                          ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4">
+              <button
+                onClick={() => setEditingRole(null)}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveRole}
+                disabled={roleSaving}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {roleSaving ? 'Guardando...' : editingRole.id ? 'Guardar' : 'Crear'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
