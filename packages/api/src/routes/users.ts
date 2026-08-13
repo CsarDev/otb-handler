@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { db, schema } from '@otb/db';
 import { eq, inArray } from 'drizzle-orm';
+import { hashPassword, requestPasswordResetByUserId } from '@otb/auth';
 import { authMiddleware, requirePermission } from '../middleware/auth';
 
 const users = new Hono();
@@ -25,6 +26,78 @@ users.get('/', requirePermission('usuarios', 'read'), async (c) => {
 
     return c.json({ users: allUsers });
   } catch (error) {
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// Create user (admin only)
+users.post('/', requirePermission('usuarios', 'create'), async (c) => {
+  try {
+    const body = await c.req.json();
+    const { email, password, name, roleId, socioId } = z
+      .object({
+        email: z.string().email(),
+        password: z.string().min(8),
+        name: z.string().min(1),
+        roleId: z.string().min(1),
+        socioId: z.string().nullable().optional(),
+      })
+      .parse(body);
+
+    const existing = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.email, email.toLowerCase()))
+      .get();
+
+    if (existing) {
+      return c.json({ error: 'Email already registered' }, 409);
+    }
+
+    const role = await db
+      .select()
+      .from(schema.roles)
+      .where(eq(schema.roles.id, roleId))
+      .get();
+
+    if (!role) {
+      return c.json({ error: 'Role not found' }, 404);
+    }
+
+    if (socioId) {
+      const socio = await db
+        .select()
+        .from(schema.socios)
+        .where(eq(schema.socios.id, socioId))
+        .get();
+
+      if (!socio) {
+        return c.json({ error: 'Socio not found' }, 404);
+      }
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const passwordHash = await hashPassword(password);
+
+    await db.insert(schema.users).values({
+      id,
+      email: email.toLowerCase(),
+      name,
+      passwordHash,
+      emailVerified: false,
+      socioId: socioId ?? null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await db.insert(schema.userRoles).values({ userId: id, roleId });
+
+    return c.json({ message: 'User created successfully', id }, 201);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return c.json({ error: 'Validation error', details: error.issues }, 400);
+    }
     return c.json({ error: 'Internal server error' }, 500);
   }
 });
@@ -230,6 +303,23 @@ users.get('/permissions', requirePermission('permisos', 'read'), async (c) => {
       .all();
 
     return c.json({ permissions });
+  } catch (error) {
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// Send password reset link to a user (admin only)
+users.post('/:id/reset-password', requirePermission('usuarios', 'update'), async (c) => {
+  try {
+    const { id } = c.req.param();
+
+    const sent = await requestPasswordResetByUserId(id);
+
+    if (!sent) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    return c.json({ message: 'Password reset link sent' });
   } catch (error) {
     return c.json({ error: 'Internal server error' }, 500);
   }

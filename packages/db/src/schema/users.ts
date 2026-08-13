@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { socios } from './socios';
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -6,6 +7,7 @@ export const users = sqliteTable('users', {
   name: text('name').notNull(),
   passwordHash: text('password_hash').notNull(),
   emailVerified: integer('email_verified', { mode: 'boolean' }).notNull().default(false),
+  socioId: text('socio_id').references(() => socios.id, { onDelete: 'set null' }),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });

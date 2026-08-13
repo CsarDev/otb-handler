@@ -24,7 +24,7 @@ const registerSchema = z.object({
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  identifier: z.string().min(1),
   password: z.string(),
 });
 
@@ -69,7 +69,7 @@ auth.post('/login', loginLimiter, async (c) => {
   try {
     const body = await c.req.json();
     const data = loginSchema.parse(body);
-    const result = await login(data.email, data.password);
+    const result = await login(data.identifier, data.password);
 
     // Set refresh token as httpOnly cookie
     c.header('Set-Cookie', `refreshToken=${result.refreshToken}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/refresh; Max-Age=${7 * 24 * 60 * 60}`);

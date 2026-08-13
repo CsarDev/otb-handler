@@ -4,6 +4,9 @@ import { logger } from '@otb/logger';
 import { db, schema } from '@otb/db';
 import { eq, and, lt, inArray } from 'drizzle-orm';
 import { hashPassword, verifyPassword } from './password';
+
+export { hashPassword } from './password';
+export { sendPasswordResetEmail } from './email';
 import {
   createRefreshToken,
   verifyRefreshToken,
@@ -172,20 +175,45 @@ export async function register(
   };
 }
 
+async function findUserByIdentifier(identifier: string) {
+  const trimmed = identifier.trim();
+
+  if (trimmed.includes('@')) {
+    return db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.email, trimmed.toLowerCase()))
+      .get();
+  }
+
+  // Lookup by socio CI: users.socioId -> socios.ci
+  const socio = await db
+    .select()
+    .from(schema.socios)
+    .where(eq(schema.socios.ci, trimmed))
+    .get();
+
+  if (!socio) {
+    return null;
+  }
+
+  return db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.socioId, socio.id))
+    .get();
+}
+
 export async function login(
-  email: string,
+  identifier: string,
   password: string,
 ): Promise<{
   user: { id: string; email: string; name: string; roleId: string; permissions: string[] };
   accessToken: string;
   refreshToken: string;
 }> {
-  // Find user
-  const user = await db
-    .select()
-    .from(schema.users)
-    .where(eq(schema.users.email, email.toLowerCase()))
-    .get();
+  // Find user by email or socio CI
+  const user = await findUserByIdentifier(identifier);
 
   if (!user) {
     throw new Error('Invalid credentials');
@@ -222,7 +250,7 @@ export async function login(
   // Create refresh token
   const refreshTokenResult = await createRefreshToken(user.id);
 
-  logger.info({ userId: user.id, email }, 'User logged in');
+  logger.info({ userId: user.id, identifier }, 'User logged in');
 
   return {
     user: {
@@ -329,6 +357,45 @@ export async function requestPasswordReset(email: string): Promise<void> {
   });
 
   logger.info({ userId: user.id }, 'Password reset requested');
+}
+
+export async function requestPasswordResetByUserId(userId: string): Promise<boolean> {
+  const user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+
+  if (!user) {
+    return false;
+  }
+
+  // Invalidate any existing reset tokens
+  await db
+    .delete(schema.passwordResetTokens)
+    .where(eq(schema.passwordResetTokens.userId, user.id));
+
+  // Create new reset token
+  const resetToken = randomUUID();
+  const resetTokenHash = await hashPassword(resetToken);
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_EXPIRY).toISOString();
+
+  await db.insert(schema.passwordResetTokens).values({
+    id: randomUUID(),
+    userId: user.id,
+    tokenHash: resetTokenHash,
+    expiresAt,
+    createdAt: new Date().toISOString(),
+  });
+
+  // Send reset email (non-blocking)
+  sendPasswordResetEmail(user.email, resetToken).catch((err) => {
+    logger.error({ err }, 'Failed to send password reset email');
+  });
+
+  logger.info({ userId: user.id }, 'Password reset requested by admin');
+
+  return true;
 }
 
 export async function resetPassword(

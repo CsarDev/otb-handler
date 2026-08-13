@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `socio_id` text REFERENCES socios(id) ON DELETE set null;

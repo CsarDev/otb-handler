@@ -18,7 +18,7 @@ export type AuthState = {
 };
 
 export type AuthActions = {
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -49,12 +49,12 @@ export const useAuthStore = create<AuthState & AuthActions>()(
       isLoading: false,
       error: null,
 
-      login: async (email: string, password: string) => {
+      login: async (identifier: string, password: string) => {
         set({ isLoading: true, error: null });
         try {
           const data = await request<{ accessToken: string; user: User }>('/auth/login', {
             method: 'POST',
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({ identifier, password }),
           });
           set({
             user: data.user,

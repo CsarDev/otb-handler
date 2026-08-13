@@ -147,6 +147,16 @@ export default function ConfigPage() {
   const [roleFormError, setRoleFormError] = useState<string | null>(null);
   const [roleSaving, setRoleSaving] = useState(false);
 
+  // Nuevo Usuario
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [newUserForm, setNewUserForm] = useState({
+    email: '', password: '', name: '', roleId: '', socioId: '',
+  });
+  const [userFormError, setUserFormError] = useState<string | null>(null);
+  const [userSaving, setUserSaving] = useState(false);
+  const [sociosList, setSociosList] = useState<Array<{ id: string; nombre: string; apellidoPaterno: string; ci: string | null }>>([]);
+  const [resettingUser, setResettingUser] = useState<Record<string, boolean>>({});
+
   const configForm = useForm<ConfigForm>({
     resolver: zodResolver(configSchema) as any,
     defaultValues: defaultConfig,
@@ -451,6 +461,79 @@ export default function ConfigPage() {
   }
 
   /* ── Usuarios y Roles (RBAC) ─────────────────────────────────── */
+
+  function openUserCreate() {
+    setNewUserForm({ email: '', password: '', name: '', roleId: '', socioId: '' });
+    setUserFormError(null);
+    setShowUserForm(true);
+    if (sociosList.length === 0) {
+      fetch('/api/socios/catalogo', { headers: { Authorization: `Bearer ${accessToken}` } })
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => setSociosList(data))
+        .catch(() => setSociosList([]));
+    }
+  }
+
+  async function handleCreateUser() {
+    if (!newUserForm.email.trim() || !newUserForm.password || !newUserForm.name.trim() || !newUserForm.roleId) {
+      setUserFormError('Email, contraseña, nombre y rol son requeridos');
+      return;
+    }
+    setUserFormError(null);
+    setUserSaving(true);
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          email: newUserForm.email.trim(),
+          password: newUserForm.password,
+          name: newUserForm.name.trim(),
+          roleId: newUserForm.roleId,
+          socioId: newUserForm.socioId || null,
+        }),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        setUserFormError(errBody.error || 'Error al crear usuario');
+        return;
+      }
+
+      const data = await res.json();
+      setShowUserForm(false);
+      setUsersList((prev) => [...prev, { id: data.id, email: newUserForm.email.trim(), name: newUserForm.name.trim(), emailVerified: false, createdAt: new Date().toISOString() }]);
+      setUserRoles((prev) => ({ ...prev, [data.id]: newUserForm.roleId }));
+    } catch {
+      setUserFormError('Error al crear usuario');
+    } finally {
+      setUserSaving(false);
+    }
+  }
+
+  async function handleSendResetLink(userId: string) {
+    setResettingUser((prev) => ({ ...prev, [userId]: true }));
+    try {
+      const res = await fetch(`/api/users/${userId}/reset-password`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (res.ok) {
+        alert('Link de restablecimiento enviado al email del usuario');
+      } else {
+        const body = await res.json().catch(() => ({}));
+        alert(body.error || 'Error al enviar link');
+      }
+    } catch {
+      alert('Error al enviar link');
+    } finally {
+      setResettingUser((prev) => ({ ...prev, [userId]: false }));
+    }
+  }
 
   async function handleUpdateUserRole(userId: string, roleId: string) {
     try {
@@ -1129,7 +1212,17 @@ export default function ConfigPage() {
             <>
               {/* Lista de Usuarios */}
               <div className="mb-6">
-                <h4 className="mb-3 text-sm font-medium text-gray-700">Usuarios</h4>
+                <div className="mb-3 flex items-center justify-between">
+                  <h4 className="text-sm font-medium text-gray-700">Usuarios</h4>
+                  {hasPermission('usuarios:create') && (
+                    <button
+                      onClick={openUserCreate}
+                      className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                    >
+                      + Nuevo Usuario
+                    </button>
+                  )}
+                </div>
                 {usersList.length === 0 ? (
                   <p className="text-sm text-gray-500">No hay usuarios registrados</p>
                 ) : (
@@ -1193,6 +1286,15 @@ export default function ConfigPage() {
                               )}
                             </td>
                             <td className="px-4 py-2 text-sm">
+                              {hasPermission('usuarios:update') && (
+                                <button
+                                  onClick={() => handleSendResetLink(u.id)}
+                                  disabled={resettingUser[u.id]}
+                                  className="mr-3 text-xs text-amber-600 hover:text-amber-800 disabled:opacity-50"
+                                >
+                                  {resettingUser[u.id] ? 'Enviando...' : 'Link reset'}
+                                </button>
+                              )}
                               {hasPermission('usuarios:delete') && (
                                 <button
                                   onClick={() => handleDeleteUser(u.id, u.name)}
@@ -1284,6 +1386,100 @@ export default function ConfigPage() {
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* ── Modal Nuevo Usuario ── */}
+      {showUserForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-bold text-gray-900">Nuevo Usuario</h3>
+
+            {userFormError && (
+              <p className="mb-3 rounded-lg bg-red-50 p-2 text-xs text-red-600">{userFormError}</p>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className={labelCls}>Nombre *</label>
+                <input
+                  value={newUserForm.name}
+                  onChange={(e) => setNewUserForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="ej. Ana Pérez"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Email *</label>
+                <input
+                  type="email"
+                  value={newUserForm.email}
+                  onChange={(e) => setNewUserForm((p) => ({ ...p, email: e.target.value }))}
+                  placeholder="usuario@otb.com"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Contraseña inicial *</label>
+                <input
+                  type="password"
+                  value={newUserForm.password}
+                  onChange={(e) => setNewUserForm((p) => ({ ...p, password: e.target.value }))}
+                  placeholder="Mínimo 8 caracteres"
+                  className={inputCls}
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={labelCls}>Rol *</label>
+                  <select
+                    value={newUserForm.roleId}
+                    onChange={(e) => setNewUserForm((p) => ({ ...p, roleId: e.target.value }))}
+                    className={inputCls}
+                  >
+                    <option value="">Seleccionar rol...</option>
+                    {rolesList.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Socio (opcional)</label>
+                  <select
+                    value={newUserForm.socioId}
+                    onChange={(e) => setNewUserForm((p) => ({ ...p, socioId: e.target.value }))}
+                    className={inputCls}
+                  >
+                    <option value="">Sin socio</option>
+                    {sociosList.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.nombre} {s.apellidoPaterno}{s.ci ? ` — CI ${s.ci}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500">
+                Si asignas un socio, el usuario podrá iniciar sesión con su email o su CI.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4">
+              <button
+                onClick={() => setShowUserForm(false)}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleCreateUser}
+                disabled={userSaving}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {userSaving ? 'Creando...' : 'Crear Usuario'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
