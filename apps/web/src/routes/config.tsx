@@ -15,6 +15,7 @@ const configSchema = z.object({
   aporteMensualBase: z.coerce.number().min(0),
   diasGraciaAporte: z.coerce.number().min(0).default(0),
   toleranciaMinutos: z.coerce.number().min(0).default(15),
+  googleOAuthEnabled: z.boolean().default(false),
 });
 
 type ConfigForm = z.infer<typeof configSchema>;
@@ -22,6 +23,7 @@ type ConfigForm = z.infer<typeof configSchema>;
 const defaultConfig: ConfigForm = {
   nombreOTB: '', gestionActual: new Date().getFullYear(),
   aporteMensualBase: 0, diasGraciaAporte: 0, toleranciaMinutos: 15,
+  googleOAuthEnabled: false,
 };
 
 const tipoSchema = z.object({
@@ -812,6 +814,17 @@ export default function ConfigPage() {
             <div>
               <label className={labelCls}>Tolerancia (min)</label>
               <input type="number" {...configForm.register('toleranciaMinutos')} className={inputCls} />
+            </div>
+          </div>
+          <div className="flex items-center gap-3 border-t border-gray-100 pt-3">
+            <Switch
+              checked={configForm.watch('googleOAuthEnabled')}
+              onChange={() => configForm.setValue('googleOAuthEnabled', !configForm.getValues('googleOAuthEnabled'))}
+              label="Iniciar sesión con Google"
+            />
+            <div>
+              <p className="text-sm font-medium text-gray-700">Iniciar sesión con Google</p>
+              <p className="text-xs text-gray-500">Muestra el botón de Google en la pantalla de login</p>
             </div>
           </div>
           <div className="pt-2">

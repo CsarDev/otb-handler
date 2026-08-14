@@ -323,6 +323,7 @@ export type OTBConfig = {
   aporteMensualBase: number;
   diasGraciaAporte: number;
   toleranciaMinutos: number;
+  googleOAuthEnabled: boolean;
 };
 
 export type DBData = {

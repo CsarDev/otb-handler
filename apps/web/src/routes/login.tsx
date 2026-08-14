@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from '@tanstack/react-router';
 import { useAuthStore } from '../stores/auth.store';
 
@@ -7,6 +7,25 @@ export function LoginPage() {
   const { login, isLoading, error, clearError } = useAuthStore();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [googleOAuthEnabled, setGoogleOAuthEnabled] = useState(false);
+  const [oauthNotice, setOauthNotice] = useState<string | null>(null);
+
+  const handleGoogle = () => {
+    // El flujo OAuth de Google se habilita con credenciales; por ahora no está
+    // conectado. El toggle en Config controla si el botón aparece.
+    setOauthNotice('El acceso con Google se habilitará cuando se configuren las credenciales.');
+  };
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.googleOAuthEnabled) setGoogleOAuthEnabled(true);
+      })
+      .catch(() => {
+        // Config pública no disponible: login con email/contraseña igual funciona.
+      });
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,6 +57,31 @@ export function LoginPage() {
               <div className="text-sm text-red-700">{error}</div>
             </div>
           )}
+          {googleOAuthEnabled && (
+            <div>
+              <button
+                type="button"
+                onClick={handleGoogle}
+                className="group relative w-full flex justify-center py-2 px-4 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400"
+              >
+                <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/>
+                </svg>
+                Continuar con Google
+              </button>
+              {oauthNotice && (
+                <p className="mt-2 text-center text-xs text-amber-600">{oauthNotice}</p>
+              )}
+            </div>
+          )}
+          <div className="mt-6 relative">
+            <div className="absolute inset-0 flex items-center" aria-hidden="true">
+              <div className="w-full border-t border-gray-300" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="bg-white px-2 text-gray-500">{googleOAuthEnabled ? 'o usa tu correo' : 'Ingresa con tu correo'}</span>
+            </div>
+          </div>
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
               <label htmlFor="identifier" className="sr-only">
