@@ -12,6 +12,7 @@ import {
 } from './catalogo';
 import {
   FEATURES,
+  SUPERADMIN_ROLE_NAME,
   featureActions,
   permissionKey,
   permissionsFromFeatures,
@@ -683,7 +684,8 @@ const modulesConfigData = [
 
 // RBAC seed data
 const ROLES_DATA = [
-  { id: id(), name: 'admin', description: 'Administrador con todos los permisos' },
+  { id: id(), name: SUPERADMIN_ROLE_NAME, description: 'Super administrador del sistema (inmutable, acceso total)' },
+  { id: id(), name: 'admin', description: 'Administrador de la OTB' },
   { id: id(), name: 'tesorero', description: 'Gestión financiera y cobros' },
   { id: id(), name: 'secretario', description: 'Gestión administrativa' },
   { id: id(), name: 'vocal', description: 'Lectura y participación básica' },
@@ -698,13 +700,24 @@ const PERMISSIONS_DATA = permissionsFromFeatures().map((p) => ({
 }));
 
 // Role → Permission mapping (resource:action format)
-// admin: TODAS las acciones del catálogo (derivadas dinámicamente)
+// superadmin: TODAS las acciones del catálogo (derivadas dinámicamente)
 const ALL_PERMISSION_KEYS = FEATURES.flatMap((f) =>
   featureActions(f).map((a) => permissionKey(f, a)),
 );
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
-  admin: ALL_PERMISSION_KEYS,
+  [SUPERADMIN_ROLE_NAME]: ALL_PERMISSION_KEYS,
+  admin: [
+    'socios:read', 'socios:create', 'socios:update', 'socios:delete',
+    'aportes:read', 'aportes:create', 'aportes:update', 'aportes:delete',
+    'multas:read', 'multas:create', 'multas:update', 'multas:delete',
+    'egresos:read', 'egresos:create', 'egresos:update', 'egresos:delete',
+    'reportes:read', 'reportes:export',
+    'config:read', 'config:update',
+    'usuarios:read', 'usuarios:create', 'usuarios:update',
+    'roles:read', 'roles:manage',
+    'permisos:read', 'permisos:manage',
+  ],
   tesorero: [
     'socios:read',
     'aportes:read', 'aportes:create', 'aportes:update',
@@ -904,11 +917,11 @@ async function main() {
   db.insert(rolePermissions).values(rolePermissionsData).run();
   console.log(`  ${rolePermissionsData.length} role-permission assignments`);
 
-  // Admin user with placeholder hash (password: admin123)
+  // Superadmin user (único, rol inmutable; password: admin123)
   db.insert(users).values([ADMIN_USER]).run();
-  // Assign admin role
-  db.insert(userRoles).values([{ userId: ADMIN_USER.id, roleId: roleIdByName.get('admin')! }]).run();
-  console.log(`  1 admin user (admin@otb.com / admin123)`);
+  // Assign superadmin role (único usuario con este rol)
+  db.insert(userRoles).values([{ userId: ADMIN_USER.id, roleId: roleIdByName.get(SUPERADMIN_ROLE_NAME)! }]).run();
+  console.log(`  1 superadmin user (admin@otb.com / admin123, rol ${SUPERADMIN_ROLE_NAME})`);
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(2);
   console.log(`\nSeed complete in ${elapsed}s`);

@@ -28,6 +28,15 @@ export type Feature = {
 
 export const CRUD_ACTIONS: FeatureAction[] = ['create', 'read', 'update', 'delete'];
 
+/** Rol de sistema inmutable: acceso completo al catálogo, un solo usuario (el seed). */
+export const SUPERADMIN_ROLE_NAME = 'superadmin';
+
+const reservedRoleNames = [SUPERADMIN_ROLE_NAME] as const;
+
+export function isReservedRoleName(name: string): boolean {
+  return (reservedRoleNames as readonly string[]).includes(name);
+}
+
 const actionDescription: Record<FeatureAction, (label: string) => string> = {
   create: (label) => `Crear ${label.toLowerCase()}`,
   read: (label) => `Ver ${label.toLowerCase()}`,

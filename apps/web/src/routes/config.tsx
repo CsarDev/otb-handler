@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/auth.store';
 import { usePermission } from '../hooks/usePermission';
 import { Badge } from '@otb/ui';
 import type { TipoActividad, EstadoSocio, Grupo } from '@otb/core';
+import { SUPERADMIN_ROLE_NAME } from '@otb/core';
 
 const configSchema = z.object({
   nombreOTB: z.string().min(1, 'Requerido'),
@@ -1334,7 +1335,7 @@ export default function ConfigPage() {
                                     onChange={(e) => setSelectedRoleId(e.target.value)}
                                     className="rounded border border-gray-300 px-2 py-1 text-xs"
                                   >
-                                    {rolesList.map((r) => (
+                                    {rolesList.filter((r) => r.name !== SUPERADMIN_ROLE_NAME).map((r) => (
                                       <option key={r.id} value={r.id}>{r.name}</option>
                                     ))}
                                   </select>
@@ -1353,10 +1354,10 @@ export default function ConfigPage() {
                                 </div>
                               ) : (
                                 <div className="flex items-center gap-2">
-                                  <Badge variant="blue">
+                                  <Badge variant={rolesList.find((r) => r.id === userRoles[u.id])?.name === SUPERADMIN_ROLE_NAME ? 'red' : 'blue'}>
                                     {rolesList.find((r) => r.id === userRoles[u.id])?.name || 'Sin rol'}
                                   </Badge>
-                                  {hasPermission('usuarios:update') && (
+                                  {hasPermission('usuarios:update') && rolesList.find((r) => r.id === userRoles[u.id])?.name !== SUPERADMIN_ROLE_NAME && (
                                     <button
                                       onClick={() => {
                                         setEditingUserRole(u.id);
@@ -1388,7 +1389,7 @@ export default function ConfigPage() {
                                   </button>
                                 </>
                               )}
-                              {hasPermission('usuarios:delete') && (
+                              {hasPermission('usuarios:delete') && rolesList.find((r) => r.id === userRoles[u.id])?.name !== SUPERADMIN_ROLE_NAME && (
                                 <button
                                   onClick={() => handleDeleteUser(u.id, u.name)}
                                   className="text-xs text-red-600 hover:text-red-800"
@@ -1423,12 +1424,16 @@ export default function ConfigPage() {
                     <div key={role.id} className="rounded-lg border bg-gray-50 p-4">
                       <div className="flex items-center justify-between">
                         <h5 className="font-medium text-gray-900">{role.name}</h5>
-                        <Badge variant="blue">{role.permissionIds?.length ?? 0} accesos</Badge>
+                        {role.name === SUPERADMIN_ROLE_NAME ? (
+                          <Badge variant="red">Sistema</Badge>
+                        ) : (
+                          <Badge variant="blue">{role.permissionIds?.length ?? 0} accesos</Badge>
+                        )}
                       </div>
                       {role.description && (
                         <p className="mt-1 text-xs text-gray-500">{role.description}</p>
                       )}
-                      {hasPermission('roles:manage') && (
+                      {hasPermission('roles:manage') && role.name !== SUPERADMIN_ROLE_NAME && (
                         <div className="mt-3 flex gap-3 border-t border-gray-200 pt-2">
                           <button
                             onClick={() => openRoleEdit(role)}
@@ -1594,7 +1599,7 @@ export default function ConfigPage() {
                     className={inputCls}
                   >
                     <option value="">Seleccionar rol...</option>
-                    {rolesList.map((r) => (
+                    {rolesList.filter((r) => r.name !== SUPERADMIN_ROLE_NAME).map((r) => (
                       <option key={r.id} value={r.id}>{r.name}</option>
                     ))}
                   </select>

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { db, schema } from '@otb/db';
 import { eq, inArray } from 'drizzle-orm';
 import { hashPassword, requestPasswordResetByUserId, setUserPassword } from '@otb/auth';
-import { FEATURES, featureActions, permissionKey, permissionDescription } from '@otb/core';
+import { FEATURES, SUPERADMIN_ROLE_NAME, featureActions, permissionKey, permissionDescription } from '@otb/core';
 import { authMiddleware, requirePermission } from '../middleware/auth';
 
 const users = new Hono();
@@ -63,6 +63,10 @@ users.post('/', requirePermission('usuarios', 'create'), async (c) => {
 
     if (!role) {
       return c.json({ error: 'Role not found' }, 404);
+    }
+
+    if (role.name === SUPERADMIN_ROLE_NAME) {
+      return c.json({ error: 'Cannot assign the superadmin role' }, 400);
     }
 
     if (socioId) {
@@ -155,6 +159,11 @@ users.post('/roles', requirePermission('roles', 'manage'), async (c) => {
       return c.json({ error: 'Role already exists' }, 409);
     }
 
+    // The superadmin role cannot be created at runtime (seeded, immutable)
+    if (name === SUPERADMIN_ROLE_NAME) {
+      return c.json({ error: 'Cannot create the superadmin role' }, 400);
+    }
+
     const id = crypto.randomUUID();
     await db.insert(schema.roles).values({ id, name, description: description ?? null });
 
@@ -195,8 +204,8 @@ users.put('/roles/:id', requirePermission('roles', 'manage'), async (c) => {
       return c.json({ error: 'Role not found' }, 404);
     }
 
-    if (role.name === 'admin' && name && name !== 'admin') {
-      return c.json({ error: 'Cannot rename the admin role' }, 400);
+    if (role.name === SUPERADMIN_ROLE_NAME) {
+      return c.json({ error: 'Cannot modify the superadmin role' }, 400);
     }
 
     if (name) {
@@ -239,8 +248,8 @@ users.delete('/roles/:id', requirePermission('roles', 'manage'), async (c) => {
       return c.json({ error: 'Role not found' }, 404);
     }
 
-    if (role.name === 'admin') {
-      return c.json({ error: 'Cannot delete the admin role' }, 400);
+    if (role.name === SUPERADMIN_ROLE_NAME) {
+      return c.json({ error: 'Cannot delete the superadmin role' }, 400);
     }
 
     const usersWithRole = await db
@@ -276,6 +285,10 @@ users.put('/roles/:id/permissions', requirePermission('roles', 'manage'), async 
 
     if (!role) {
       return c.json({ error: 'Role not found' }, 404);
+    }
+
+    if (role.name === SUPERADMIN_ROLE_NAME) {
+      return c.json({ error: 'Cannot modify the superadmin role permissions' }, 400);
     }
 
     await db.delete(schema.rolePermissions).where(eq(schema.rolePermissions.roleId, id));
@@ -333,19 +346,19 @@ users.post('/permissions/sync', requirePermission('permisos', 'manage'), async (
       await db.insert(schema.permissions).values(rows);
     }
 
-    // Assign all catalog permissions to the admin role
-    const adminRole = await db
+    // Assign all catalog permissions to the superadmin role (inmutable: catálogo le da todo)
+    const superAdminRole = await db
       .select()
       .from(schema.roles)
-      .where(eq(schema.roles.name, 'admin'))
+      .where(eq(schema.roles.name, SUPERADMIN_ROLE_NAME))
       .get();
 
-    let grantedToAdmin = 0;
-    if (adminRole) {
+    let grantedToSuperadmin = 0;
+    if (superAdminRole) {
       const current = await db
         .select({ permissionId: schema.rolePermissions.permissionId })
         .from(schema.rolePermissions)
-        .where(eq(schema.rolePermissions.roleId, adminRole.id))
+        .where(eq(schema.rolePermissions.roleId, superAdminRole.id))
         .all();
       const currentIds = new Set(current.map((r) => r.permissionId));
 
@@ -359,16 +372,16 @@ users.post('/permissions/sync', requirePermission('permisos', 'manage'), async (
 
       if (toGrant.length > 0) {
         await db.insert(schema.rolePermissions).values(
-          toGrant.map((p) => ({ roleId: adminRole.id, permissionId: p.id })),
+          toGrant.map((p) => ({ roleId: superAdminRole.id, permissionId: p.id })),
         );
-        grantedToAdmin = toGrant.length;
+        grantedToSuperadmin = toGrant.length;
       }
     }
 
     return c.json({
       message: 'Permissions synchronized',
       created: missing.length,
-      grantedToAdmin,
+      grantedToSuperadmin,
     });
   } catch (error) {
     return c.json({ error: 'Internal server error' }, 500);
@@ -488,6 +501,30 @@ users.put('/:id/role', requirePermission('usuarios', 'update'), async (c) => {
       return c.json({ error: 'Role not found' }, 404);
     }
 
+    // Nobody can be assigned the superadmin role (unique, seeded user only)
+    if (role.name === SUPERADMIN_ROLE_NAME) {
+      return c.json({ error: 'Cannot assign the superadmin role' }, 400);
+    }
+
+    // The superadmin user's role cannot be changed
+    const currentRoles = await db
+      .select({ roleId: schema.userRoles.roleId })
+      .from(schema.userRoles)
+      .where(eq(schema.userRoles.userId, id))
+      .all();
+
+    const currentRoleIds = currentRoles.map((r) => r.roleId);
+    if (currentRoleIds.length) {
+      const currentRolesData = await db
+        .select()
+        .from(schema.roles)
+        .where(inArray(schema.roles.id, currentRoleIds))
+        .all();
+      if (currentRolesData.some((r) => r.name === SUPERADMIN_ROLE_NAME)) {
+        return c.json({ error: 'Cannot change the superadmin user role' }, 400);
+      }
+    }
+
     // Delete existing roles
     await db
       .delete(schema.userRoles)
@@ -525,6 +562,25 @@ users.delete('/:id', requirePermission('usuarios', 'delete'), async (c) => {
 
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
+    }
+
+    // The superadmin user cannot be deleted
+    const currentRoles = await db
+      .select({ roleId: schema.userRoles.roleId })
+      .from(schema.userRoles)
+      .where(eq(schema.userRoles.userId, id))
+      .all();
+
+    const currentRoleIds = currentRoles.map((r) => r.roleId);
+    if (currentRoleIds.length) {
+      const currentRolesData = await db
+        .select()
+        .from(schema.roles)
+        .where(inArray(schema.roles.id, currentRoleIds))
+        .all();
+      if (currentRolesData.some((r) => r.name === SUPERADMIN_ROLE_NAME)) {
+        return c.json({ error: 'Cannot delete the superadmin user' }, 400);
+      }
     }
 
     // Delete user (cascades to user_roles, refresh_tokens, etc.)
