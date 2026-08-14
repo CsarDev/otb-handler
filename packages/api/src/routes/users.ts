@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { db, schema } from '@otb/db';
 import { eq, inArray } from 'drizzle-orm';
-import { hashPassword, requestPasswordResetByUserId } from '@otb/auth';
+import { hashPassword, requestPasswordResetByUserId, setUserPassword } from '@otb/auth';
+import { FEATURES, featureActions, permissionKey, permissionDescription } from '@otb/core';
 import { authMiddleware, requirePermission } from '../middleware/auth';
 
 const users = new Hono();
@@ -308,6 +309,72 @@ users.get('/permissions', requirePermission('permisos', 'read'), async (c) => {
   }
 });
 
+// Sync permissions from the feature catalog (admin only)
+// Creates missing permissions declared in @otb/core FEATURES and grants them
+// to the admin role automatically.
+users.post('/permissions/sync', requirePermission('permisos', 'manage'), async (c) => {
+  try {
+    const existing = await db.select().from(schema.permissions).all();
+    const existingKeys = new Set(existing.map((p) => `${p.resource}:${p.action}`));
+
+    const missing = FEATURES.flatMap((f) =>
+      featureActions(f)
+        .map((a) => ({ key: permissionKey(f, a), feature: f, action: a }))
+        .filter(({ key }) => !existingKeys.has(key)),
+    );
+
+    if (missing.length > 0) {
+      const rows = missing.map(({ feature, action }) => ({
+        id: crypto.randomUUID(),
+        resource: feature.resource,
+        action,
+        description: permissionDescription(feature, action),
+      }));
+      await db.insert(schema.permissions).values(rows);
+    }
+
+    // Assign all catalog permissions to the admin role
+    const adminRole = await db
+      .select()
+      .from(schema.roles)
+      .where(eq(schema.roles.name, 'admin'))
+      .get();
+
+    let grantedToAdmin = 0;
+    if (adminRole) {
+      const current = await db
+        .select({ permissionId: schema.rolePermissions.permissionId })
+        .from(schema.rolePermissions)
+        .where(eq(schema.rolePermissions.roleId, adminRole.id))
+        .all();
+      const currentIds = new Set(current.map((r) => r.permissionId));
+
+      const allPermissions = await db.select().from(schema.permissions).all();
+      const catalogKeys = new Set(
+        FEATURES.flatMap((f) => featureActions(f).map((a) => permissionKey(f, a))),
+      );
+      const toGrant = allPermissions
+        .filter((p) => catalogKeys.has(`${p.resource}:${p.action}`))
+        .filter((p) => !currentIds.has(p.id));
+
+      if (toGrant.length > 0) {
+        await db.insert(schema.rolePermissions).values(
+          toGrant.map((p) => ({ roleId: adminRole.id, permissionId: p.id })),
+        );
+        grantedToAdmin = toGrant.length;
+      }
+    }
+
+    return c.json({
+      message: 'Permissions synchronized',
+      created: missing.length,
+      grantedToAdmin,
+    });
+  } catch (error) {
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
 // Send password reset link to a user (admin only)
 users.post('/:id/reset-password', requirePermission('usuarios', 'update'), async (c) => {
   try {
@@ -321,6 +388,30 @@ users.post('/:id/reset-password', requirePermission('usuarios', 'update'), async
 
     return c.json({ message: 'Password reset link sent' });
   } catch (error) {
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// Set a user's password directly (admin only)
+users.put('/:id/password', requirePermission('usuarios', 'update'), async (c) => {
+  try {
+    const { id } = c.req.param();
+    const body = await c.req.json();
+    const { newPassword } = z
+      .object({ newPassword: z.string().min(8) })
+      .parse(body);
+
+    const ok = await setUserPassword(id, newPassword);
+
+    if (!ok) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    return c.json({ message: 'Password updated successfully' });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return c.json({ error: 'Validation error', details: error.issues }, 400);
+    }
     return c.json({ error: 'Internal server error' }, 500);
   }
 });

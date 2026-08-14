@@ -157,6 +157,16 @@ export default function ConfigPage() {
   const [sociosList, setSociosList] = useState<Array<{ id: string; nombre: string; apellidoPaterno: string; ci: string | null }>>([]);
   const [resettingUser, setResettingUser] = useState<Record<string, boolean>>({});
 
+  // Cambiar contraseña (admin)
+  const [passwordUser, setPasswordUser] = useState<{ id: string; name: string } | null>(null);
+  const [passwordValue, setPasswordValue] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+
+  // Sincronizar permisos
+  const [syncingPerms, setSyncingPerms] = useState(false);
+  const [permSyncMsg, setPermSyncMsg] = useState<string | null>(null);
+
   const configForm = useForm<ConfigForm>({
     resolver: zodResolver(configSchema) as any,
     defaultValues: defaultConfig,
@@ -532,6 +542,81 @@ export default function ConfigPage() {
       alert('Error al enviar link');
     } finally {
       setResettingUser((prev) => ({ ...prev, [userId]: false }));
+    }
+  }
+
+  function openPasswordModal(user: { id: string; name: string }) {
+    setPasswordUser(user);
+    setPasswordValue('');
+    setPasswordError(null);
+  }
+
+  async function handleSetPassword() {
+    if (!passwordUser) return;
+    if (passwordValue.length < 8) {
+      setPasswordError('La contraseña debe tener al menos 8 caracteres');
+      return;
+    }
+    setPasswordError(null);
+    setPasswordSaving(true);
+    try {
+      const res = await fetch(`/api/users/${passwordUser.id}/password`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ newPassword: passwordValue }),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        setPasswordError(errBody.error || 'Error al cambiar contraseña');
+        return;
+      }
+
+      setPasswordUser(null);
+      alert('Contraseña actualizada');
+    } catch {
+      setPasswordError('Error al cambiar contraseña');
+    } finally {
+      setPasswordSaving(false);
+    }
+  }
+
+  async function handleSyncPermissions() {
+    setSyncingPerms(true);
+    setPermSyncMsg(null);
+    try {
+      const res = await fetch('/api/users/permissions/sync', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        setPermSyncMsg(`Error: ${errBody.error || 'no se pudo sincronizar'}`);
+        return;
+      }
+
+      const data = await res.json();
+      const text = data.created > 0 || data.grantedToAdmin > 0
+        ? `Sincronizado: ${data.created} acciones creadas, ${data.grantedToAdmin} otorgadas a admin`
+        : 'Sincronizado: el catálogo está al día';
+      setPermSyncMsg(text);
+
+      // Refrescar lista de permisos
+      const permsRes = await fetch('/api/users/permissions', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (permsRes.ok) {
+        const permsData = await permsRes.json();
+        setPermissionsList(permsData.permissions || []);
+      }
+    } catch {
+      setPermSyncMsg('Error al sincronizar permisos');
+    } finally {
+      setSyncingPerms(false);
     }
   }
 
@@ -1287,13 +1372,21 @@ export default function ConfigPage() {
                             </td>
                             <td className="px-4 py-2 text-sm">
                               {hasPermission('usuarios:update') && (
-                                <button
-                                  onClick={() => handleSendResetLink(u.id)}
-                                  disabled={resettingUser[u.id]}
-                                  className="mr-3 text-xs text-amber-600 hover:text-amber-800 disabled:opacity-50"
-                                >
-                                  {resettingUser[u.id] ? 'Enviando...' : 'Link reset'}
-                                </button>
+                                <>
+                                  <button
+                                    onClick={() => openPasswordModal({ id: u.id, name: u.name })}
+                                    className="mr-3 text-xs text-blue-600 hover:text-blue-800"
+                                  >
+                                    Contraseña
+                                  </button>
+                                  <button
+                                    onClick={() => handleSendResetLink(u.id)}
+                                    disabled={resettingUser[u.id]}
+                                    className="mr-3 text-xs text-amber-600 hover:text-amber-800 disabled:opacity-50"
+                                  >
+                                    {resettingUser[u.id] ? 'Enviando...' : 'Link reset'}
+                                  </button>
+                                </>
                               )}
                               {hasPermission('usuarios:delete') && (
                                 <button
@@ -1361,7 +1454,23 @@ export default function ConfigPage() {
               {/* Lista de Permisos */}
               {hasPermission('permisos:read') && (
                 <div>
-                  <h4 className="mb-3 text-sm font-medium text-gray-700">Permisos</h4>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-sm font-medium text-gray-700">Permisos</h4>
+                    {hasPermission('permisos:manage') && (
+                      <button
+                        onClick={handleSyncPermissions}
+                        disabled={syncingPerms}
+                        className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                      >
+                        {syncingPerms ? 'Sincronizando...' : 'Sincronizar del catálogo'}
+                      </button>
+                    )}
+                  </div>
+                  {permSyncMsg && (
+                    <p className={`mb-2 text-xs ${permSyncMsg.startsWith('Error') ? 'text-red-600' : 'text-green-600'}`}>
+                      {permSyncMsg}
+                    </p>
+                  )}
                   <div className="overflow-x-auto rounded-lg border">
                     <table className="min-w-full divide-y divide-gray-200">
                       <thead className="bg-gray-50">
@@ -1386,6 +1495,53 @@ export default function ConfigPage() {
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* ── Modal Cambiar Contraseña ── */}
+      {passwordUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-bold text-gray-900">
+              Cambiar contraseña de {passwordUser.name}
+            </h3>
+
+            {passwordError && (
+              <p className="mb-3 rounded-lg bg-red-50 p-2 text-xs text-red-600">{passwordError}</p>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className={labelCls}>Nueva contraseña *</label>
+                <input
+                  type="password"
+                  value={passwordValue}
+                  onChange={(e) => setPasswordValue(e.target.value)}
+                  placeholder="Mínimo 8 caracteres"
+                  className={inputCls}
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                El usuario quedará deslogueado y deberá iniciar sesión con la nueva contraseña.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4">
+              <button
+                onClick={() => setPasswordUser(null)}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSetPassword}
+                disabled={passwordSaving}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {passwordSaving ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

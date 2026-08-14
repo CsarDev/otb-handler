@@ -10,6 +10,12 @@ import {
   idEstadoPorNombre,
   idAportePorMonto,
 } from './catalogo';
+import {
+  FEATURES,
+  featureActions,
+  permissionKey,
+  permissionsFromFeatures,
+} from '@otb/core';
 
 const {
   tiposActividad,
@@ -684,59 +690,21 @@ const ROLES_DATA = [
   { id: id(), name: 'socio', description: 'Acceso limitado a datos propios' },
 ];
 
-const PERMISSIONS_DATA = [
-  // Socios
-  { id: id(), resource: 'socios', action: 'read', description: 'Ver socios' },
-  { id: id(), resource: 'socios', action: 'create', description: 'Crear socios' },
-  { id: id(), resource: 'socios', action: 'update', description: 'Editar socios' },
-  { id: id(), resource: 'socios', action: 'delete', description: 'Eliminar socios' },
-  // Aportes
-  { id: id(), resource: 'aportes', action: 'read', description: 'Ver aportes' },
-  { id: id(), resource: 'aportes', action: 'create', description: 'Crear aportes' },
-  { id: id(), resource: 'aportes', action: 'update', description: 'Editar aportes' },
-  { id: id(), resource: 'aportes', action: 'delete', description: 'Eliminar aportes' },
-  // Multas
-  { id: id(), resource: 'multas', action: 'read', description: 'Ver multas' },
-  { id: id(), resource: 'multas', action: 'create', description: 'Crear multas' },
-  { id: id(), resource: 'multas', action: 'update', description: 'Editar multas' },
-  { id: id(), resource: 'multas', action: 'delete', description: 'Eliminar multas' },
-  // Egresos
-  { id: id(), resource: 'egresos', action: 'read', description: 'Ver egresos' },
-  { id: id(), resource: 'egresos', action: 'create', description: 'Crear egresos' },
-  { id: id(), resource: 'egresos', action: 'update', description: 'Editar egresos' },
-  { id: id(), resource: 'egresos', action: 'delete', description: 'Eliminar egresos' },
-  // Reportes
-  { id: id(), resource: 'reportes', action: 'read', description: 'Ver reportes' },
-  { id: id(), resource: 'reportes', action: 'export', description: 'Exportar reportes' },
-  // Config
-  { id: id(), resource: 'config', action: 'read', description: 'Ver configuración' },
-  { id: id(), resource: 'config', action: 'update', description: 'Editar configuración' },
-  // Usuarios
-  { id: id(), resource: 'usuarios', action: 'read', description: 'Ver usuarios' },
-  { id: id(), resource: 'usuarios', action: 'create', description: 'Crear usuarios' },
-  { id: id(), resource: 'usuarios', action: 'update', description: 'Editar usuarios' },
-  { id: id(), resource: 'usuarios', action: 'delete', description: 'Eliminar usuarios' },
-  // Roles
-  { id: id(), resource: 'roles', action: 'read', description: 'Ver roles' },
-  { id: id(), resource: 'roles', action: 'manage', description: 'Gestionar roles' },
-  // Permisos
-  { id: id(), resource: 'permisos', action: 'read', description: 'Ver permisos' },
-  { id: id(), resource: 'permisos', action: 'manage', description: 'Gestionar permisos' },
-];
+const PERMISSIONS_DATA = permissionsFromFeatures().map((p) => ({
+  id: id(),
+  resource: p.resource,
+  action: p.action,
+  description: p.description,
+}));
 
 // Role → Permission mapping (resource:action format)
+// admin: TODAS las acciones del catálogo (derivadas dinámicamente)
+const ALL_PERMISSION_KEYS = FEATURES.flatMap((f) =>
+  featureActions(f).map((a) => permissionKey(f, a)),
+);
+
 const ROLE_PERMISSIONS: Record<string, string[]> = {
-  admin: [
-    'socios:read', 'socios:create', 'socios:update', 'socios:delete',
-    'aportes:read', 'aportes:create', 'aportes:update', 'aportes:delete',
-    'multas:read', 'multas:create', 'multas:update', 'multas:delete',
-    'egresos:read', 'egresos:create', 'egresos:update', 'egresos:delete',
-    'reportes:read', 'reportes:export',
-    'config:read', 'config:update',
-    'usuarios:read', 'usuarios:create', 'usuarios:update', 'usuarios:delete',
-    'roles:read', 'roles:manage',
-    'permisos:read', 'permisos:manage',
-  ],
+  admin: ALL_PERMISSION_KEYS,
   tesorero: [
     'socios:read',
     'aportes:read', 'aportes:create', 'aportes:update',
@@ -909,6 +877,18 @@ async function main() {
   const permIdByResourceAction = new Map(
     PERMISSIONS_DATA.map((p) => [`${p.resource}:${p.action}`, p.id]),
   );
+
+  // Validación: toda acción referenciada por un rol DEBE existir en el catálogo
+  for (const [roleName, permKeys] of Object.entries(ROLE_PERMISSIONS)) {
+    for (const key of permKeys) {
+      if (!permIdByResourceAction.has(key)) {
+        throw new Error(
+          `Seed inconsistency: permission "${key}" for role "${roleName}" ` +
+            'is not declared in @otb/core FEATURES catalog. Add the feature/action first.',
+        );
+      }
+    }
+  }
 
   const rolePermissionsData: (typeof schema.rolePermissions.$inferInsert)[] = [];
   for (const [roleName, permKeys] of Object.entries(ROLE_PERMISSIONS)) {

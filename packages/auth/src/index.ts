@@ -482,6 +482,31 @@ export async function changePassword(
   return true;
 }
 
+/** Fuerza un nuevo password (admin) sin verificar el actual. Invalida sesiones. */
+export async function setUserPassword(userId: string, newPassword: string): Promise<boolean> {
+  const user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+
+  if (!user) {
+    return false;
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  await db
+    .update(schema.users)
+    .set({ passwordHash, updatedAt: new Date().toISOString() })
+    .where(eq(schema.users.id, userId));
+
+  await invalidateAllUserTokens(userId);
+
+  logger.info({ userId }, 'Password set by admin');
+
+  return true;
+}
+
 export async function getCurrentUser(userId: string) {
   const user = await db
     .select()
