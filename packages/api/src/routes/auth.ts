@@ -16,6 +16,12 @@ import { logger } from '@otb/logger';
 
 const auth = new Hono();
 
+// El flag `Secure` solo en producción: sobre http://localhost los navegadores
+// no almacenan/envían cookies Secure, y la rotación del refresh token falla en
+// dev. En producción (https) el flag se mantiene.
+const refreshCookie = (value: string, maxAge: number) =>
+  `refreshToken=${value}; HttpOnly; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Lax; Path=/api/auth/refresh; Max-Age=${maxAge}`;
+
 // Validation schemas
 const registerSchema = z.object({
   email: z.string().email(),
@@ -72,7 +78,7 @@ auth.post('/login', loginLimiter, async (c) => {
     const result = await login(data.identifier, data.password);
 
     // Set refresh token as httpOnly cookie
-    c.header('Set-Cookie', `refreshToken=${result.refreshToken}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/refresh; Max-Age=${7 * 24 * 60 * 60}`);
+    c.header('Set-Cookie', refreshCookie(result.refreshToken, 7 * 24 * 60 * 60));
 
     return c.json({ accessToken: result.accessToken, user: result.user });
   } catch (error) {
@@ -103,7 +109,7 @@ auth.post('/refresh', async (c) => {
     }
 
     // Set new refresh token as httpOnly cookie
-    c.header('Set-Cookie', `refreshToken=${result.refreshToken}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/refresh; Max-Age=${7 * 24 * 60 * 60}`);
+    c.header('Set-Cookie', refreshCookie(result.refreshToken, 7 * 24 * 60 * 60));
 
     return c.json({ accessToken: result.accessToken });
   } catch (error) {
@@ -121,7 +127,7 @@ auth.post('/logout', async (c) => {
     }
 
     // Clear refresh token cookie
-    c.header('Set-Cookie', 'refreshToken=; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/refresh; Max-Age=0');
+    c.header('Set-Cookie', refreshCookie('', 0));
 
     return c.json({ message: 'Logged out' });
   } catch (error) {
