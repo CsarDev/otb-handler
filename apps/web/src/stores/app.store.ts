@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useAuthStore } from './auth.store';
 import type {
   Socio,
   SocioInput,
@@ -43,10 +44,27 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
+  const token = useAuthStore.getState().accessToken;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options?.headers as Record<string, string> | undefined),
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let res = await fetch(`${BASE}${path}`, { ...options, headers });
+
+  // Token expirado (vigencia 15m): rotar con la cookie httpOnly y reintentar
+  // UNA vez; también refrescar el user del store para que la UI quede al día.
+  if (res.status === 401 && token) {
+    await useAuthStore.getState().refresh();
+    const newToken = useAuthStore.getState().accessToken;
+    if (newToken && newToken !== token) {
+      void useAuthStore.getState().loadUser();
+      headers.Authorization = `Bearer ${newToken}`;
+      res = await fetch(`${BASE}${path}`, { ...options, headers });
+    }
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new ApiError(body.error ?? res.statusText, res.status);
