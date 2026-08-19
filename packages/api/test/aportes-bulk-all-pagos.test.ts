@@ -6,9 +6,12 @@
 // apuntan a 2025 o a ventanas que no cubren el año actual. Los re-runs de
 // bulk/bulk-all son dedup-safe (D13): `{ count: 0, items: [] }`.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrarDb, limpiarDatos, requestJson, crearSocio, crearDefinicion, fila, filas, ejecutar, IDS } from './helpers';
+import { migrarDb, limpiarDatos, initAuth, requestJson, crearSocio, crearDefinicion, fila, filas, ejecutar, IDS } from './helpers';
 
-beforeAll(() => migrarDb());
+beforeAll(async () => {
+  migrarDb();
+  await initAuth();
+});
 beforeEach(() => limpiarDatos());
 
 const NO_ELIGIBLES = 'Ningún socio puede participar en esta acción en su estado actual';

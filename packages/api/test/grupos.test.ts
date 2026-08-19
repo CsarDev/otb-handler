@@ -11,9 +11,12 @@
 // pre-existente del cambio archivado); esta suite cubre las 10 escenarios del
 // spec de grupos con asserts de comportamiento, no solo de status.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrarDb, limpiarDatos, requestJson, crearSocio, crearGrupo, crearDefinicion, fila, filas } from './helpers';
+import { migrarDb, limpiarDatos, initAuth, requestJson, crearSocio, crearGrupo, crearDefinicion, fila, filas } from './helpers';
 
-beforeAll(() => migrarDb());
+beforeAll(async () => {
+  migrarDb();
+  await initAuth();
+});
 beforeEach(() => limpiarDatos());
 
 const NO_ENCONTRADO = { error: 'Grupo no encontrado' };

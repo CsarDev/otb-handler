@@ -7,9 +7,12 @@
 // auto-genera la gestión actual (D16) → los endpoints manuales apuntan a una
 // gestión pasada (2025) o a ventanas que no cubren el año actual.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrarDb, limpiarDatos, requestJson, crearSocio, crearGrupo, crearDefinicion, fila, filas, IDS } from './helpers';
+import { migrarDb, limpiarDatos, initAuth, requestJson, crearSocio, crearGrupo, crearDefinicion, fila, filas, IDS } from './helpers';
 
-beforeAll(() => migrarDb());
+beforeAll(async () => {
+  migrarDb();
+  await initAuth();
+});
 beforeEach(() => limpiarDatos());
 
 const ERROR_PERMISO = 'El socio no puede realizar esta acción en su estado actual';

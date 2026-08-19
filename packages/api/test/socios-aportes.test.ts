@@ -4,9 +4,12 @@
 // socio GENERA los cobros en la misma transacción (D16): la respuesta incluye
 // `generados.count` y la membresía genera registros (INVERTIDO vs. el archivo).
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrarDb, limpiarDatos, requestJson, crearSocio, crearGrupo, crearDefinicion, filas, IDS } from './helpers';
+import { migrarDb, limpiarDatos, initAuth, requestJson, crearSocio, crearGrupo, crearDefinicion, filas, IDS } from './helpers';
 
-beforeAll(() => migrarDb());
+beforeAll(async () => {
+  migrarDb();
+  await initAuth();
+});
 beforeEach(() => limpiarDatos());
 
 describe('Socios — POST multiselect aporteIds', () => {

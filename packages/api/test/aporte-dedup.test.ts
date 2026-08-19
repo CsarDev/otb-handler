@@ -16,6 +16,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   migrarDb,
   limpiarDatos,
+  initAuth,
   requestJson,
   crearSocio,
   crearDefinicion,
@@ -26,7 +27,10 @@ import {
   IDS,
 } from './helpers';
 
-beforeAll(() => migrarDb());
+beforeAll(async () => {
+  migrarDb();
+  await initAuth();
+});
 beforeEach(() => limpiarDatos());
 
 function bulk(body: Record<string, unknown>) {

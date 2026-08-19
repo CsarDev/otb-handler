@@ -7,9 +7,12 @@
 // set = socioIds ∪ miembros actuales de TODOS los grupos, respuesta
 // `{ definiciones, generados }`.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrarDb, limpiarDatos, requestJson, crearSocio, crearDefinicion, crearGrupo, fila, filas, ejecutar, IDS } from './helpers';
+import { migrarDb, limpiarDatos, initAuth, requestJson, crearSocio, crearDefinicion, crearGrupo, fila, filas, ejecutar, IDS } from './helpers';
 
-beforeAll(() => migrarDb());
+beforeAll(async () => {
+  migrarDb();
+  await initAuth();
+});
 beforeEach(() => limpiarDatos());
 
 const EN_USO_MSG = 'No se puede eliminar: hay socios o registros usando este aporte';

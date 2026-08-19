@@ -16,6 +16,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   migrarDb,
   limpiarDatos,
+  initAuth,
   requestJson,
   crearSocio,
   crearGrupo,
@@ -24,7 +25,10 @@ import {
   IDS,
 } from './helpers';
 
-beforeAll(() => migrarDb());
+beforeAll(async () => {
+  migrarDb();
+  await initAuth();
+});
 beforeEach(() => limpiarDatos());
 
 const FECHAS = ['2026-01-15', '2026-02-15', '2026-03-15'];

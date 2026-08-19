@@ -14,9 +14,12 @@
 // Escrito RED antes del cambio GREEN en egresos.ts (T2.1): hoy el endpoint
 // devuelve un array plano, así que `data.items`/`data.total` no existen.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrarDb, limpiarDatos, requestJson, filas, ejecutar } from './helpers';
+import { migrarDb, limpiarDatos, initAuth, requestJson, filas, ejecutar } from './helpers';
 
-beforeAll(() => migrarDb());
+beforeAll(async () => {
+  migrarDb();
+  await initAuth();
+});
 beforeEach(() => limpiarDatos());
 
 /** INSERT crudo de un egreso con id explícito (precedente reportes.test.ts). */

@@ -18,6 +18,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   migrarDb,
   limpiarDatos,
+  initAuth,
   requestJson,
   crearSocio,
   crearGrupo,
@@ -26,7 +27,10 @@ import {
   IDS,
 } from './helpers';
 
-beforeAll(() => migrarDb());
+beforeAll(async () => {
+  migrarDb();
+  await initAuth();
+});
 beforeEach(() => limpiarDatos());
 
 /** Crea `n` socios (est-activo por defecto) y devuelve sus ids. */

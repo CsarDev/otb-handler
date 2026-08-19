@@ -17,9 +17,12 @@
 // Escrito RED antes del cambio GREEN en actividades.ts (T2.3): hoy el endpoint
 // devuelve un array plano y no existe /catalogo.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrarDb, limpiarDatos, requestJson, filas, ejecutar } from './helpers';
+import { migrarDb, limpiarDatos, initAuth, requestJson, filas, ejecutar } from './helpers';
 
-beforeAll(() => migrarDb());
+beforeAll(async () => {
+  migrarDb();
+  await initAuth();
+});
 
 /**
  * Seed idempotente del tipo `t-reunion`. `INSERT OR IGNORE` lo hace repetible;
