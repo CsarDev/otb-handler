@@ -35,9 +35,21 @@ function NavLink({ to, label, onClick }: { to: string; label: string; onClick?: 
 
 export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { isAuthenticated, user, logout } = useAuthStore();
+  const { isAuthenticated, user, logout, loadUser, refresh } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Refresh session on boot: the persisted store can be stale (permissions live
+  // inside the JWT and are minted at login), so rotate the token FIRST to get a
+  // JWT with current permissions, then reload the user object from /auth/me.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    (async () => {
+      await refresh();
+      await loadUser();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Redirect to login if not authenticated (except for auth pages)
   useEffect(() => {
