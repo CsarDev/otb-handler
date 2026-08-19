@@ -5,8 +5,11 @@ import type { Aporte, AporteInherited, Socio } from '@otb/core';
 import { cargarPermisosPorEstado, permite } from '../lib/permisos';
 import { generarAportes, definicionesPorIds, definicionesDeGrupos } from '../lib/aportes';
 import { parsePaginacion } from '../lib/paginacion';
+import { requirePermission, authMiddleware } from '../middleware/auth';
 
 const socios = new Hono();
+
+socios.use('*', authMiddleware);
 
 // Columnas del socio SIN el legacy `estado` (se dropea en fase 0004) y SIN el
 // legacy `tipoAporteId`/`aporteBase` (modelo corregido D1): el socio ya no tiene
@@ -276,7 +279,7 @@ function armarSocios(filas: FilaSocio[]): Socio[] {
   return filas.map((f) => armarSocio(f, grupos, directos.get(f.id) ?? [], inherited.get(f.id) ?? []));
 }
 
-socios.get('/', (c) => {
+socios.get('/', requirePermission('socios', 'read'), (c) => {
   const { page, pageSize } = parsePaginacion(c.req.query());
   const where = (f => (f.length ? and(...f) : undefined))(filtrosSocios(c.req.query()));
 
@@ -302,7 +305,7 @@ socios.get('/', (c) => {
 // (o todos, sin filtros), mismo ORDER BY alfabético; IGNORA page/pageSize. Los
 // consumidores-selector (multas/aportes/asistencia/reportes, R5) iteran el array
 // completo para `<option>`/filtros → paginar aquí rompería esas páginas.
-socios.get('/catalogo', (c) => {
+socios.get('/catalogo', requirePermission('socios', 'read'), (c) => {
   const where = (f => (f.length ? and(...f) : undefined))(filtrosSocios(c.req.query()));
   const filas = selectSociosConEstado()
     .where(where)
@@ -311,7 +314,7 @@ socios.get('/catalogo', (c) => {
   return c.json(armarSocios(filas));
 });
 
-socios.get('/:id', (c) => {
+socios.get('/:id', requirePermission('socios', 'read'), (c) => {
   const { id } = c.req.param();
   const fila = selectSociosConEstado().where(eq(schema.socios.id, id)).get();
 
@@ -445,7 +448,7 @@ function camposSocio(body: Record<string, unknown>): Partial<typeof schema.socio
   return campos;
 }
 
-socios.post('/', async (c) => {
+socios.post('/', requirePermission('socios', 'create'), async (c) => {
   const body = await c.req.json();
 
   if (!body.nombre || !body.apellidoPaterno) {
@@ -524,7 +527,7 @@ socios.post('/', async (c) => {
   );
 });
 
-socios.put('/:id', async (c) => {
+socios.put('/:id', requirePermission('socios', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
@@ -647,7 +650,7 @@ socios.put('/:id', async (c) => {
   });
 });
 
-socios.post('/:id/baja', async (c) => {
+socios.post('/:id/baja', requirePermission('socios', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
@@ -686,7 +689,7 @@ socios.post('/:id/baja', async (c) => {
 });
 
 // Soft delete: solo cambia estadoId → esBaja (motivoBaja/fechaBaja quedan null)
-socios.delete('/:id', (c) => {
+socios.delete('/:id', requirePermission('socios', 'delete'), (c) => {
   const { id } = c.req.param();
 
   const existing = db.select({ id: schema.socios.id }).from(schema.socios).where(eq(schema.socios.id, id)).get();

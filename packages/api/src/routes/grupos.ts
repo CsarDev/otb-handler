@@ -1,18 +1,21 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq } from 'drizzle-orm';
+import { authMiddleware, requirePermission } from '../middleware/auth';
 
 const grupos = new Hono();
+
+grupos.use('*', authMiddleware);
 
 function listaCompleta() {
   return db.select().from(schema.grupos).all();
 }
 
-grupos.get('/', (c) => {
+grupos.get('/', requirePermission('socios', 'read'), (c) => {
   return c.json(listaCompleta());
 });
 
-grupos.post('/', async (c) => {
+grupos.post('/', requirePermission('socios', 'manage'), async (c) => {
   const body = await c.req.json();
 
   if (!body.nombre) {
@@ -30,7 +33,7 @@ grupos.post('/', async (c) => {
   return c.json(listaCompleta(), 201);
 });
 
-grupos.put('/:id', async (c) => {
+grupos.put('/:id', requirePermission('socios', 'manage'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
@@ -53,7 +56,7 @@ grupos.put('/:id', async (c) => {
   return c.json(listaCompleta());
 });
 
-grupos.delete('/:id', (c) => {
+grupos.delete('/:id', requirePermission('socios', 'manage'), (c) => {
   const { id } = c.req.param();
 
   const existing = db

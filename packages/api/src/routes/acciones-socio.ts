@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, ne } from 'drizzle-orm';
+import { authMiddleware, requirePermission } from '../middleware/auth';
 
 const accionesSocio = new Hono();
+
+accionesSocio.use('*', authMiddleware);
 
 function listaCompleta() {
   return db.select().from(schema.accionesSocio).orderBy(schema.accionesSocio.orden).all();
@@ -15,11 +18,11 @@ function claveEnUso(clave: string, excluirId?: string): boolean {
   return !!db.select({ id: schema.accionesSocio.id }).from(schema.accionesSocio).where(condicion).get();
 }
 
-accionesSocio.get('/', (c) => {
+accionesSocio.get('/', requirePermission('socios', 'read'), (c) => {
   return c.json(listaCompleta());
 });
 
-accionesSocio.post('/', async (c) => {
+accionesSocio.post('/', requirePermission('socios', 'manage'), async (c) => {
   const body = await c.req.json();
 
   if (!body.clave) return c.json({ error: 'clave is required' }, 400);
@@ -42,7 +45,7 @@ accionesSocio.post('/', async (c) => {
   return c.json(listaCompleta(), 201);
 });
 
-accionesSocio.put('/:id', async (c) => {
+accionesSocio.put('/:id', requirePermission('socios', 'manage'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
@@ -67,7 +70,7 @@ accionesSocio.put('/:id', async (c) => {
   return c.json(listaCompleta());
 });
 
-accionesSocio.delete('/:id', (c) => {
+accionesSocio.delete('/:id', requirePermission('socios', 'manage'), (c) => {
   const { id } = c.req.param();
 
   const existing = db.select({ id: schema.accionesSocio.id }).from(schema.accionesSocio).where(eq(schema.accionesSocio.id, id)).get();

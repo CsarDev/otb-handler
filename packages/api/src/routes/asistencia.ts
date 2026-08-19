@@ -2,10 +2,13 @@ import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, getTableColumns, or, inArray } from 'drizzle-orm';
 import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
+import { requirePermission, authMiddleware } from '../middleware/auth';
 
 const asistencia = new Hono();
 
-asistencia.get('/actividad/:actividadId', (c) => {
+asistencia.use('*', authMiddleware);
+
+asistencia.get('/actividad/:actividadId', requirePermission('asistencia', 'read'), (c) => {
   const { actividadId } = c.req.param();
   const estadoId = c.req.query('estadoId');
   const grupoId = c.req.query('grupoId');
@@ -29,7 +32,7 @@ asistencia.get('/actividad/:actividadId', (c) => {
   return c.json(query.where(and(...filters)).all());
 });
 
-asistencia.post('/', async (c) => {
+asistencia.post('/', requirePermission('asistencia', 'create'), async (c) => {
   const body = await c.req.json();
 
   if (!body.actividadId || !Array.isArray(body.registros)) {
@@ -70,7 +73,7 @@ asistencia.post('/', async (c) => {
   return c.json(records, 201);
 });
 
-asistencia.put('/:id', async (c) => {
+asistencia.put('/:id', requirePermission('asistencia', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
   delete body.id;

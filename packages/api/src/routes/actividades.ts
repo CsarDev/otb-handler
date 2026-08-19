@@ -2,8 +2,11 @@ import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, getTableColumns, sql, desc } from 'drizzle-orm';
 import { parsePaginacion } from '../lib/paginacion';
+import { requirePermission, authMiddleware } from '../middleware/auth';
 
 const actividades = new Hono();
+
+actividades.use('*', authMiddleware);
 
 // SELECT compartido por GET / y GET /catalogo (D55): columnas de actividades +
 // tipoNombre via LEFT JOIN tipos_actividad (regresión join-fixes R3 — null si
@@ -20,7 +23,7 @@ const selectActividadesConTipo = () =>
 // Envelope Paginated<Actividad> SIEMPRE (D55): sin filtros server-side → COUNT
 // trivial count(*) sobre actividades; ORDER BY desc(fecha), desc(id) = más
 // reciente primero, tiebreak PK (orden total — D34).
-actividades.get('/', (c) => {
+actividades.get('/', requirePermission('actividades', 'read'), (c) => {
   const { page, pageSize } = parsePaginacion(c.req.query());
 
   // COUNT espejo: tabla simple, sin joins ni filtros → count(*) de actividades.
@@ -37,7 +40,7 @@ actividades.get('/', (c) => {
 // NUEVO GET /catalogo — array plano completo con tipoNombre, mismo ORDER BY,
 // IGNORA page/pageSize (R4). Declarado ANTES de las rutas /:id (D54). Lo
 // consumen como catálogo los selectores de multas.tsx/asistencia.tsx.
-actividades.get('/catalogo', (c) => {
+actividades.get('/catalogo', requirePermission('actividades', 'read'), (c) => {
   return c.json(
     selectActividadesConTipo()
       .orderBy(desc(schema.actividades.fecha), desc(schema.actividades.id))
@@ -45,7 +48,7 @@ actividades.get('/catalogo', (c) => {
   );
 });
 
-actividades.post('/', async (c) => {
+actividades.post('/', requirePermission('actividades', 'create'), async (c) => {
   const body = await c.req.json();
 
   if (!body.tipoId || !body.fecha) {
@@ -61,7 +64,7 @@ actividades.post('/', async (c) => {
   return c.json(result, 201);
 });
 
-actividades.put('/:id', async (c) => {
+actividades.put('/:id', requirePermission('actividades', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
   delete body.id;
@@ -84,7 +87,7 @@ actividades.put('/:id', async (c) => {
   return c.json(result);
 });
 
-actividades.delete('/:id', (c) => {
+actividades.delete('/:id', requirePermission('actividades', 'delete'), (c) => {
   const { id } = c.req.param();
   const existing = db
     .select()

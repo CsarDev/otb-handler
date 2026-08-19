@@ -4,6 +4,7 @@ import { eq, inArray } from 'drizzle-orm';
 import type { Aporte, ModalidadPago, Recurrencia } from '@otb/core';
 import { cargarPermisosPorEstado, permite } from '../lib/permisos';
 import { generarAportes, grupoIdsPorDefinicion } from '../lib/aportes';
+import { authMiddleware, requirePermission } from '../middleware/auth';
 
 // Router CRUD de definiciones de aporte (`/api/aportes-definicion`). El aporte
 // ES la definición (`aportes_definicion`). El `id` es generado por el SERVER
@@ -171,11 +172,13 @@ function catalogoHidratado(): Aporte[] {
 
 const aportesDefinicion = new Hono();
 
-aportesDefinicion.get('/', (c) => {
+aportesDefinicion.use('*', authMiddleware);
+
+aportesDefinicion.get('/', requirePermission('aportes', 'read'), (c) => {
   return c.json(catalogoHidratado());
 });
 
-aportesDefinicion.post('/', async (c) => {
+aportesDefinicion.post('/', requirePermission('aportes', 'create'), async (c) => {
   const body = await c.req.json();
 
   const v = validarAporte(body);
@@ -280,7 +283,7 @@ aportesDefinicion.post('/', async (c) => {
   );
 });
 
-aportesDefinicion.put('/:id', async (c) => {
+aportesDefinicion.put('/:id', requirePermission('aportes', 'update'), async (c) => {
   const { id } = c.req.param();
   const existing = db
     .select({ id: schema.aportesDefinicion.id })
@@ -418,7 +421,7 @@ aportesDefinicion.put('/:id', async (c) => {
   });
 });
 
-aportesDefinicion.delete('/:id', (c) => {
+aportesDefinicion.delete('/:id', requirePermission('aportes', 'delete'), (c) => {
   const { id } = c.req.param();
   const existing = db
     .select({ id: schema.aportesDefinicion.id })

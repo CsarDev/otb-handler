@@ -2,15 +2,18 @@ import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, gte, lte, sql, desc } from 'drizzle-orm';
 import { parsePaginacion } from '../lib/paginacion';
+import { requirePermission, authMiddleware } from '../middleware/auth';
 
 const egresos = new Hono();
+
+egresos.use('*', authMiddleware);
 
 // Envelope Paginated<Egreso> SIEMPRE (D56): filtros categoria/fechaDesde/
 // fechaHasta aplican ANTES de LIMIT/OFFSET con COUNT espejo (mismo WHERE,
 // tabla simple sin joins); ORDER BY desc(fecha), desc(id) = flujo de caja más
 // reciente primero, tiebreak PK (orden total — D34). Shape del item intacta
 // `{ id, categoria, beneficiario, monto, descripcion, fecha, numRecibo }`.
-egresos.get('/', (c) => {
+egresos.get('/', requirePermission('egresos', 'read'), (c) => {
   const { page, pageSize } = parsePaginacion(c.req.query());
   const { categoria, fechaDesde, fechaHasta } = c.req.query();
   const filters: any[] = [];
@@ -34,7 +37,7 @@ egresos.get('/', (c) => {
   return c.json({ items, total: Number(total?.n ?? 0), page, pageSize });
 });
 
-egresos.post('/', async (c) => {
+egresos.post('/', requirePermission('egresos', 'create'), async (c) => {
   const body = await c.req.json();
 
   if (!body.categoria || !body.beneficiario || !body.monto || !body.fecha) {
@@ -75,7 +78,7 @@ egresos.post('/', async (c) => {
   return c.json(created, 201);
 });
 
-egresos.put('/:id', async (c) => {
+egresos.put('/:id', requirePermission('egresos', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
   delete body.id;
@@ -127,7 +130,7 @@ egresos.put('/:id', async (c) => {
   return c.json(result);
 });
 
-egresos.delete('/:id', (c) => {
+egresos.delete('/:id', requirePermission('egresos', 'delete'), (c) => {
   const { id } = c.req.param();
   const existing = db
     .select()

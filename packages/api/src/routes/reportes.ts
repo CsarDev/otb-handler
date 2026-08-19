@@ -3,10 +3,13 @@ import { db, schema } from '@otb/db';
 import { eq, and, gte, lte, sql, getTableColumns, or, inArray, asc, desc } from 'drizzle-orm';
 import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
 import { parsePaginacion } from '../lib/paginacion';
+import { requirePermission, authMiddleware } from '../middleware/auth';
 
 const reportes = new Hono();
 
-reportes.get('/balance', (c) => {
+reportes.use('*', authMiddleware);
+
+reportes.get('/balance', requirePermission('reportes', 'read'), (c) => {
   const gestion = c.req.query('gestion');
   const mes = c.req.query('mes');
   const fechaDesde = c.req.query('fechaDesde');
@@ -81,7 +84,7 @@ reportes.get('/balance', (c) => {
   });
 });
 
-reportes.get('/libro-diario', (c) => {
+reportes.get('/libro-diario', requirePermission('reportes', 'read'), (c) => {
   const { page, pageSize } = parsePaginacion(c.req.query());
   const gestion = c.req.query('gestion');
   const mes = c.req.query('mes');
@@ -150,7 +153,7 @@ reportes.get('/libro-diario', (c) => {
   return c.json({ items, total: Number(totalRow?.n ?? 0), page, pageSize });
 });
 
-reportes.get('/resumen-socio/:id', (c) => {
+reportes.get('/resumen-socio/:id', requirePermission('reportes', 'read'), (c) => {
   const { id } = c.req.param();
   const gestion = c.req.query('gestion');
   const mes = c.req.query('mes');

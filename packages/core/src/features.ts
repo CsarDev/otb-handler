@@ -47,7 +47,15 @@ const actionDescription: Record<FeatureAction, (label: string) => string> = {
 };
 
 export function featureActions(feature: Feature): FeatureAction[] {
-  if (feature.crud) return CRUD_ACTIONS;
+  if (feature.crud) {
+    const base = [...CRUD_ACTIONS];
+    if (feature.actions) {
+      for (const a of feature.actions) {
+        if (!base.includes(a)) base.push(a);
+      }
+    }
+    return base;
+  }
   return feature.actions ?? [];
 }
 
@@ -68,10 +76,13 @@ export function permissionDescription(
  * en las rutas protegidas.
  */
 export const FEATURES: Feature[] = [
-  { resource: 'socios', label: 'Socios', crud: true },
+  { resource: 'dashboard', label: 'Dashboard', actions: ['read'] },
+  { resource: 'socios', label: 'Socios', crud: true, actions: ['manage'] },
   { resource: 'aportes', label: 'Aportes', crud: true },
   { resource: 'multas', label: 'Multas', crud: true },
   { resource: 'egresos', label: 'Egresos', crud: true },
+  { resource: 'actividades', label: 'Actividades', crud: true, actions: ['manage'] },
+  { resource: 'asistencia', label: 'Asistencia', crud: true },
   { resource: 'reportes', label: 'Reportes', actions: ['read', 'export'] },
   { resource: 'config', label: 'Configuración', actions: ['read', 'update'] },
   { resource: 'usuarios', label: 'Usuarios', crud: true },

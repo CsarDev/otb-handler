@@ -1,10 +1,13 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, gte, lte, sql } from 'drizzle-orm';
+import { requirePermission, authMiddleware } from '../middleware/auth';
 
 const dashboard = new Hono();
 
-dashboard.get('/', (c) => {
+dashboard.use('*', authMiddleware);
+
+dashboard.get('/', requirePermission('dashboard', 'read'), (c) => {
   const ahora = new Date();
   const mes = String(ahora.getMonth() + 1).padStart(2, '0');
   const gestion = ahora.getFullYear();

@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq, and, inArray, sql, ne } from 'drizzle-orm';
+import { authMiddleware, requirePermission } from '../middleware/auth';
 
 const estadosSocio = new Hono();
+
+estadosSocio.use('*', authMiddleware);
 
 // M:N aplanado: estadoId → accionIds[] (1 query agrupada por estadoId)
 function accionIdsPorEstado(): Map<string, string[]> {
@@ -60,11 +63,11 @@ function validarUnicidadFlag(
   return null;
 }
 
-estadosSocio.get('/', (c) => {
+estadosSocio.get('/', requirePermission('socios', 'read'), (c) => {
   return c.json(listaCompleta());
 });
 
-estadosSocio.post('/', async (c) => {
+estadosSocio.post('/', requirePermission('socios', 'manage'), async (c) => {
   const body = await c.req.json();
 
   if (!body.nombre) return c.json({ error: 'nombre is required' }, 400);
@@ -130,7 +133,7 @@ estadosSocio.post('/', async (c) => {
   return c.json(listaCompleta(), 201);
 });
 
-estadosSocio.put('/:id', async (c) => {
+estadosSocio.put('/:id', requirePermission('socios', 'manage'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
@@ -167,7 +170,7 @@ estadosSocio.put('/:id', async (c) => {
   return c.json(listaCompleta());
 });
 
-estadosSocio.delete('/:id', (c) => {
+estadosSocio.delete('/:id', requirePermission('socios', 'manage'), (c) => {
   const { id } = c.req.param();
 
   const existing = db.select({ id: schema.estadosSocio.id }).from(schema.estadosSocio).where(eq(schema.estadosSocio.id, id)).get();
@@ -189,7 +192,7 @@ estadosSocio.delete('/:id', (c) => {
 });
 
 // Toggle inline: reemplazo atómico del M:N (delete + insert en tx)
-estadosSocio.put('/:id/acciones', async (c) => {
+estadosSocio.put('/:id/acciones', requirePermission('socios', 'manage'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 

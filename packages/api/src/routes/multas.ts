@@ -4,10 +4,13 @@ import { eq, and, getTableColumns, lte, gte, sql, or, inArray, desc } from 'driz
 import { cargarPermisosPorEstado, permite, ERROR_PERMISO } from '../lib/permisos';
 import { sociosPorGrupos } from '../lib/aportes';
 import { parsePaginacion } from '../lib/paginacion';
+import { requirePermission, authMiddleware } from '../middleware/auth';
 
 const multas = new Hono();
 
-multas.get('/', (c) => {
+multas.use('*', authMiddleware);
+
+multas.get('/', requirePermission('multas', 'read'), (c) => {
   const { socioId, estado, actividadId, fechaDesde, fechaHasta, gestion, estadoId, grupoId, page, pageSize } =
     c.req.query();
   const { page: p, pageSize: ps } = parsePaginacion({ page, pageSize });
@@ -59,7 +62,7 @@ multas.get('/', (c) => {
   return c.json({ items, total: Number(total?.n ?? 0), page: p, pageSize: ps });
 });
 
-multas.post('/bulk', async (c) => {
+multas.post('/bulk', requirePermission('multas', 'create'), async (c) => {
   const body = await c.req.json();
 
   // D36 (orden fijo, TODO antes de insertar):
@@ -130,7 +133,7 @@ multas.post('/bulk', async (c) => {
   return c.json({ count: created.length, items: created }, 201);
 });
 
-multas.post('/', async (c) => {
+multas.post('/', requirePermission('multas', 'create'), async (c) => {
   const body = await c.req.json();
 
   if (!body.socioId || !body.concepto || !body.monto) {
@@ -166,7 +169,7 @@ multas.post('/', async (c) => {
   return c.json(result, 201);
 });
 
-multas.post('/:id/anular', async (c) => {
+multas.post('/:id/anular', requirePermission('multas', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
@@ -212,7 +215,7 @@ multas.post('/:id/anular', async (c) => {
   return c.json(updated);
 });
 
-multas.get('/:id/pagos', (c) => {
+multas.get('/:id/pagos', requirePermission('multas', 'read'), (c) => {
   const { id } = c.req.param();
   const pagos = db
     .select()
@@ -227,7 +230,7 @@ multas.get('/:id/pagos', (c) => {
   return c.json(pagos);
 });
 
-multas.post('/:id/pagar', async (c) => {
+multas.post('/:id/pagar', requirePermission('multas', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
@@ -292,7 +295,7 @@ multas.post('/:id/pagar', async (c) => {
   return c.json(updated);
 });
 
-multas.put('/:id', async (c) => {
+multas.put('/:id', requirePermission('multas', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
   delete body.id;
@@ -325,7 +328,7 @@ multas.put('/:id', async (c) => {
   return result ? c.json(result) : c.json({ error: 'Not found' }, 404);
 });
 
-multas.delete('/:id', (c) => {
+multas.delete('/:id', requirePermission('multas', 'delete'), (c) => {
   const { id } = c.req.param();
   const existing = db
     .select()

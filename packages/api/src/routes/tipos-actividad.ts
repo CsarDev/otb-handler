@@ -1,14 +1,17 @@
 import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq } from 'drizzle-orm';
+import { requirePermission, authMiddleware } from '../middleware/auth';
 
 const tiposActividad = new Hono();
 
-tiposActividad.get('/', (c) => {
+tiposActividad.use('*', authMiddleware);
+
+tiposActividad.get('/', requirePermission('actividades', 'read'), (c) => {
   return c.json(db.select().from(schema.tiposActividad).all());
 });
 
-tiposActividad.post('/', async (c) => {
+tiposActividad.post('/', requirePermission('actividades', 'manage'), async (c) => {
   const body = await c.req.json();
 
   if (!body.nombre) {
@@ -28,7 +31,7 @@ tiposActividad.post('/', async (c) => {
   return c.json(db.select().from(schema.tiposActividad).all(), 201);
 });
 
-tiposActividad.put('/:id', async (c) => {
+tiposActividad.put('/:id', requirePermission('actividades', 'manage'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
@@ -53,7 +56,7 @@ tiposActividad.put('/:id', async (c) => {
   return c.json(db.select().from(schema.tiposActividad).all());
 });
 
-tiposActividad.delete('/:id', (c) => {
+tiposActividad.delete('/:id', requirePermission('actividades', 'manage'), (c) => {
   const { id } = c.req.param();
 
   const existing = db

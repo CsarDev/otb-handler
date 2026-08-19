@@ -34,7 +34,8 @@ export function requirePermission(resource: string, action: string) {
     }
 
     const permission = `${resource}:${action}`;
-    const hasPermission = auth.permissions.includes(permission) || auth.permissions.includes(`${resource}:manage`);
+    const managePermission = `${resource}:manage`;
+    const hasPermission = auth.permissions.includes(permission) || auth.permissions.includes(managePermission);
 
     if (!hasPermission) {
       return c.json({ error: 'Forbidden' }, 403);

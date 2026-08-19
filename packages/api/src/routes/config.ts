@@ -2,8 +2,11 @@ import { Hono } from 'hono';
 import { db, schema } from '@otb/db';
 import { eq } from 'drizzle-orm';
 import { aporteDefActivoDefault } from '../lib/aportes';
+import { requirePermission, authMiddleware } from '../middleware/auth';
 
 const configRouter = new Hono();
+
+configRouter.use('*', authMiddleware);
 const MODULE_NAME = 'otb-core';
 
 function getOtbConfig(): Record<string, unknown> | null {
@@ -16,7 +19,7 @@ function getOtbConfig(): Record<string, unknown> | null {
   return row ? (JSON.parse(row.config ?? '{}') as Record<string, unknown>) : null;
 }
 
-configRouter.get('/', (c) => {
+configRouter.get('/', requirePermission('config', 'read'), (c) => {
   const config = getOtbConfig();
   if (!config) return c.json({ error: 'OTB not configured' }, 404);
 
@@ -29,7 +32,7 @@ configRouter.get('/', (c) => {
   });
 });
 
-configRouter.put('/', async (c) => {
+configRouter.put('/', requirePermission('config', 'update'), async (c) => {
   const body = await c.req.json();
   const existing = getOtbConfig();
   const merged = { ...(existing ?? {}), ...body } as Record<string, unknown>;
@@ -59,7 +62,7 @@ configRouter.put('/', async (c) => {
   return c.json(merged);
 });
 
-configRouter.get('/initialized', (c) => {
+configRouter.get('/initialized', requirePermission('config', 'read'), (c) => {
   const config = getOtbConfig();
   const initialized = !!(config?.nombreOTB && config?.gestionActual && config?.aporteMensualBase);
   return c.json({ initialized, config });

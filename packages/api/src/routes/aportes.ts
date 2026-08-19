@@ -14,8 +14,11 @@ import {
   validarGestionMes,
   validarDefinicionesActivas,
 } from '../lib/aportes';
+import { requirePermission, authMiddleware } from '../middleware/auth';
 
 const aportes = new Hono();
+
+aportes.use('*', authMiddleware);
 
 /**
  * D8/D9: NO existe override manual — `monto` y `tipo` en el body se rechazan
@@ -29,7 +32,7 @@ function rechazarOverride(body: Record<string, unknown>): { error: string; statu
   return null;
 }
 
-aportes.get('/', (c) => {
+aportes.get('/', requirePermission('aportes', 'read'), (c) => {
   const { socioId, mes, gestion, estado, tipo, fechaDesde, fechaHasta, estadoId, grupoId, page, pageSize } =
     c.req.query();
   const { page: p, pageSize: ps } = parsePaginacion({ page, pageSize });
@@ -84,7 +87,7 @@ aportes.get('/', (c) => {
   return c.json({ items, total: Number(total?.n ?? 0), page: p, pageSize: ps });
 });
 
-aportes.post('/bulk', async (c) => {
+aportes.post('/bulk', requirePermission('aportes', 'create'), async (c) => {
   const body = await c.req.json();
 
   const override = rechazarOverride(body);
@@ -132,7 +135,7 @@ aportes.post('/bulk', async (c) => {
   return c.json({ count: created.length, items: created }, 201);
 });
 
-aportes.post('/bulk/all', async (c) => {
+aportes.post('/bulk/all', requirePermission('aportes', 'create'), async (c) => {
   const body = await c.req.json();
 
   const override = rechazarOverride(body);
@@ -176,7 +179,7 @@ aportes.post('/bulk/all', async (c) => {
   return c.json({ count: created.length, items: created }, 201);
 });
 
-aportes.get('/socio/:socioId', (c) => {
+aportes.get('/socio/:socioId', requirePermission('aportes', 'read'), (c) => {
   const { socioId } = c.req.param();
   const list = db
     .select()
@@ -187,7 +190,7 @@ aportes.get('/socio/:socioId', (c) => {
   return c.json(list);
 });
 
-aportes.get('/:id/pagos', (c) => {
+aportes.get('/:id/pagos', requirePermission('aportes', 'read'), (c) => {
   const { id } = c.req.param();
 
   const aporte = db
@@ -219,7 +222,7 @@ aportes.get('/:id/pagos', (c) => {
 // Generación individual definition-driven (D8): body { socioId, aporteId, gestion, mes? }.
 // El socio debe existir (404), su estado debe permitir 'aportes' (409) y debe
 // "hold" la definición (directa o heredada por grupo, 400 si no).
-aportes.post('/', async (c) => {
+aportes.post('/', requirePermission('aportes', 'create'), async (c) => {
   const body = await c.req.json();
 
   const override = rechazarOverride(body);
@@ -287,7 +290,7 @@ aportes.post('/', async (c) => {
   return c.json({ count: created.length, items: created }, 201);
 });
 
-aportes.post('/:id/pagar', async (c) => {
+aportes.post('/:id/pagar', requirePermission('aportes', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
@@ -354,7 +357,7 @@ aportes.post('/:id/pagar', async (c) => {
   return c.json(updated);
 });
 
-aportes.post('/:id/anular', async (c) => {
+aportes.post('/:id/anular', requirePermission('aportes', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
 
@@ -400,7 +403,7 @@ aportes.post('/:id/anular', async (c) => {
   return c.json(updated);
 });
 
-aportes.put('/:id', async (c) => {
+aportes.put('/:id', requirePermission('aportes', 'update'), async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
   delete body.id;
